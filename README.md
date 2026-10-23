@@ -1,13 +1,8 @@
 <div align="center">
 
-```
-████████╗ ██████╗ ██████╗ ██████╗ ███████╗███╗   ██╗████████╗██╗ █████╗ ██╗
-╚══██╔══╝██╔═══██╗██╔══██╗██╔══██╗██╔════╝████╗  ██║╚══██╔══╝██║██╔══██╗██║
-   ██║   ██║   ██║██████╔╝██████╔╝█████╗  ██╔██╗ ██║   ██║   ██║███████║██║
-   ██║   ██║   ██║██╔══██╗██╔══██╗██╔══╝  ██║╚██╗██║   ██║   ██║██╔══██║██║
-   ██║   ╚██████╔╝██║  ██║██║  ██║███████╗██║ ╚████║   ██║   ██║██║  ██║███████╗
-   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝╚═╝  ╚═╝╚══════╝
-```
+<!-- Swap in a recording when you have one: record search → pick → playback,
+     save it as docs/demo.gif, and point the src below at it. -->
+<img src="docs/demo.png" alt="torrential — search the swarm · stream the storm" width="760">
 
 **hunt the episode · stream the storm**
 
@@ -16,12 +11,6 @@ A torrential downpour of TV, right in your terminal.
 torlink-inspired TUI · programmatic WebTorrent engine · series → seasons → episodes, zero wait
 
 [Features](#features) · [Install](#install) · [Quickstart](#quickstart) · [Keybindings](#keybindings) · [Streaming](#how-streaming-works) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
-
-<!-- Swap in a recording when you have one: record search → pick → playback,
-     save it as docs/demo.gif, and point the src below at it. -->
-<p align="center">
-  <img src="docs/demo.png" alt="torrential — the dive-in screen: type a query, paste a magnet or info-hash, or /theme for skins" width="720">
-</p>
 
 </div>
 
@@ -468,6 +457,16 @@ When an upgrade bumps a pinned native dependency, npm will re-warn; review it
 and re-approve with `npm install-scripts approve <pkg>` (or run
 `npm install-scripts ls` to see what is pending).
 
+## Star history
+
+<a href="https://star-history.com/#frierens-arm/torrential&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=frierens-arm/torrential&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=frierens-arm/torrential&type=Date" />
+    <img alt="Star History Chart" width="600" src="https://api.star-history.com/svg?repos=frierens-arm/torrential&type=Date" />
+  </picture>
+</a>
+
 ## Credits
 
 - [torlink](https://github.com/baairon/torlink) — the clean interactive search workflow
@@ -480,13 +479,3 @@ and re-approve with `npm install-scripts approve <pkg>` (or run
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-## Star history
-
-<a href="https://star-history.com/#frierens-arm/torrential&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=frierens-arm/torrential&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=frierens-arm/torrential&type=Date" />
-    <img alt="Star History Chart" width="600" src="https://api.star-history.com/svg?repos=frierens-arm/torrential&type=Date" />
-  </picture>
-</a>
