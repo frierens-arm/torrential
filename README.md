@@ -109,7 +109,7 @@ flow, `movies` goes straight to the list. Switch with `--mode` or `/mode`.
   in-process [WebTorrent](https://webtorrent.io) engine: DHT + tracker peer
   discovery, critical-piece-first fetching driven by HTTP `Range` requests,
   and an on-disk piece cache that fills while you watch.
-- **Speed engine (v1.2) — built for slow networks** — a pre-warmed client
+- **Speed engine — built for slow networks** — a pre-warmed client
   boots with the app (DHT is hot before you pick a result), the first ~4 MB of
   the file **and** its tail (MP4 `moov` / MKV `Cues`) start downloading the
   instant metadata lands — before the player even opens — metadata is cached
@@ -150,7 +150,7 @@ flow, `movies` goes straight to the list. Switch with `--mode` or `/mode`.
   `--default-player mpv`) validates the choice against what's actually
   installed and saves it to config. No more editing JSON. `--default-player`
   with no value shows the current setting plus everything detected.
-- **Skins (v1.3, picker polished in v1.3.1)** — eight hermes-agent-style themes:
+- **Skins** — eight hermes-agent-style themes:
   `rain` (default violet→cyan), `matrix`, `sunset`, `ocean`, `ember`, `candy`,
   `amber`, `mono`. Apply for one session with `--theme matrix`, or type
   `/theme` in the search bar for the live color-chart picker — **↑/↓ or j/k
@@ -392,7 +392,7 @@ for how the pieces fit together (providers → engine → player → TUI).
 | Symptom | What it means / what to do |
 |---|---|
 | `✗ 1337x blocked` chip / dim `⚠ 1337x: … (HTTP 403)` footnote | The indexer answered with a Cloudflare challenge — common on VPN/datacenter IPs. Results from the other sources are unaffected. Retry, toggle your VPN, or drop the source: `--sources tpb,nyaa` (or the `providers` config key). |
-| IINA says it cannot open the file | Fixed in v1.1.0 — the URL is now passed positionally to `iina-cli`. Make sure `iina-cli` is installed (IINA menu → Install CLI Tool); quit IINA when done to trigger teardown. |
+| IINA says it cannot open the file | The URL is passed positionally to `iina-cli`, so make sure it's installed (IINA menu → Install CLI Tool); quit IINA when done to trigger teardown. |
 | `no metadata after 45s — swarm looks dead` | Nobody is seeding. Pick a result with more seeders (the SEED column is color-coded; red = dead). |
 | A movie-heavy search still opened the series view | The auto router saw more episode-ish rows than movie rows. Re-run with `--mode movies` (or `/mode movies`, then search again) for the flat list. |
 | A movie never appears in the series list | Expected in `tv` mode — the strict filter drops non-episodic rows. Use `auto` or `movies` for those releases. |
