@@ -256,6 +256,28 @@ and asserts history recall plus the `state.json` round-trip.
 CI runs both sets on Linux/macOS/Windows × Node 22/24. A `v*` tag publishes to
 npm with provenance and attaches the tarball to the GitHub release.
 
+## Dependency & security notes
+
+`package.json` carries two fields that must not be removed:
+
+- **`overrides.ip`** — the `ip` package is abandoned upstream with an
+  unpatched high-severity advisory (GHSA-2p57-rm9w-gvfp: `isPublic`
+  mis-classifies non-canonical addresses; no fixed release exists, and npm's
+  `audit fix --force` "fix" would downgrade webtorrent to 0.7.x). It is aliased
+  to `@eggjs/ip`, a maintained drop-in built on `net.isIP`/`net.SocketAddress`.
+  If a future webtorrent release replaces `ip` upstream, drop the override.
+- **`allowScripts`** — npm ≥ 12 skips dependency install scripts unless
+  approved. The approved entries are the tooling that genuinely needs them:
+  `node-datachannel` (prebuilt WebRTC binary — without it streaming cannot
+  connect), `utp-native`, `bufferutil`, `utf-8-validate` (node-gyp bindings)
+  and `esbuild` (tsx's installer). `ip-set` is explicitly denied: its published
+  `preinstall` (`npx only-allow pnpm`) is an accidentally shipped repo guard
+  that would hard-fail every npm install.
+
+When an upgrade bumps a pinned native dependency, npm re-warns; review and
+re-approve with `npm install-scripts approve <pkg>` (`npm install-scripts ls`
+shows what is pending).
+
 ## Adding a provider
 
 ```ts
