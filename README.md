@@ -162,7 +162,7 @@ flow, `movies` goes straight to the list. Switch with `--mode` or `/mode`.
 
 | | |
 |---|---|
-| Node.js | ≥ 18.18 |
+| Node.js | **≥ 22.0** (18 and 20 will not work — see [Install](#install)) |
 | OS | Linux, macOS, Windows |
 | Player | any of: system default handler, mpv, VLC, IINA (macOS) |
 
@@ -171,6 +171,28 @@ flow, `movies` goes straight to the list. Switch with `--mode` or `/mode`.
 > `brew install mpv` · `apt install mpv` · `winget install mpv`
 
 ## Install
+
+**Check your Node version first — 22 or newer is required:**
+
+```bash
+node -v              # must print v22.x or higher
+```
+
+`webtorrent@3` and `undici@7` no longer support older runtimes. On Node 18/20
+`npm install` only prints `EBADENGINE` warnings, and the next command dies with
+a stack trace that never mentions Node:
+
+```
+node_modules/undici/lib/web/webidl/index.js:537
+webidl.is.File = webidl.util.MakeTypeAssertion(File)
+                                               ^
+ReferenceError: File is not defined
+```
+
+Upgrade with [nvm](https://github.com/nvm-sh/nvm) (`nvm install 22 && nvm use 22`),
+[fnm](https://github.com/Schniz/fnm), or `brew install node@22`. The repo ships
+an `.npmrc` with `engine-strict=true`, so `npm install` now stops immediately
+with a clear `EBADENGINE` error on a too-old Node instead of installing anyway.
 
 From source (clone/unzip this directory) — two commands and you're running:
 
@@ -187,9 +209,50 @@ Or run it straight without installing:
 npm install && npm run build && node dist/cli.js
 ```
 
-Works on **Linux, macOS and Windows** (Node.js ≥ 18.18). No external tools
-are required — every speed feature is pure Node/WebTorrent. If the zip you
-got already contains `dist/`, you can skip the build entirely.
+Works on **Linux, macOS and Windows** (Node.js ≥ 22). No external tools are
+required — every speed feature is pure Node/WebTorrent. If the zip you got
+already contains `dist/`, you can skip the build entirely.
+
+### `permission denied` (`EACCES`) on install
+
+`npm link` / `npm install -g` fails on macOS and Linux when npm's global prefix
+(`/usr/local`, or the Homebrew `node` prefix) belongs to root:
+
+```
+npm ERR! code EACCES
+npm ERR! syscall mkdir
+npm ERR! path /usr/local/lib/node_modules/torrential
+npm ERR! errno -13
+npm ERR! Error: EACCES: permission denied, mkdir '/usr/local/lib/node_modules/torrential'
+```
+
+**Do not fix it with `sudo`** — that leaves root-owned files behind and makes
+the next install fail differently. Point npm at a prefix you own instead:
+
+```bash
+mkdir -p ~/.npm-global
+npm config set prefix ~/.npm-global
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc   # ~/.bashrc on bash
+source ~/.zshrc
+
+cd torrential
+npm link             # or: npm install -g .
+torrential --version
+```
+
+Already installing Node through nvm/fnm or Homebrew? Then npm's prefix is
+usually writable and there is nothing to change — make sure you are **not**
+using the system Node, and re-check with `npm config get prefix`.
+
+Other options, no global config changes needed:
+
+- Run it from the checkout: `node dist/cli.js` (or `npm start`) — no global
+  install, no write outside the project.
+- If a previous `sudo npm install` left root-owned files in the way:
+  `sudo chown -R "$(id -u):$(id -g)" "$(npm config get prefix)/lib/node_modules" "$(npm config get prefix)/bin"`.
+- If `./dist/cli.js` itself says `permission denied`, the executable bit is
+  missing from the build output: `chmod +x dist/cli.js`, or just prefix it
+  with `node`.
 
 ## Quickstart
 
@@ -391,6 +454,8 @@ for how the pieces fit together (providers → engine → player → TUI).
 
 | Symptom | What it means / what to do |
 |---|---|
+| `ReferenceError: File is not defined` from `node_modules/undici/lib/web/webidl/index.js` (often after `EBADENGINE` warnings) | You're on Node 18 or 20; `webtorrent@3`/`undici@7` need **Node ≥ 22**. Your code is fine — the runtime is too old. Upgrade (`nvm install 22 && nvm use 22`, or `brew install node@22`), then rerun `npm install && npm run build` — no need to delete `node_modules`. See [Install](#install). |
+| `npm ERR! code EACCES` / `permission denied` while running `npm install`, `npm link` or `npm install -g` | npm is writing into a root-owned global prefix (`/usr/local` is the usual culprit). Don't use `sudo`; repoint npm's prefix at `~/.npm-global` (or run `node dist/cli.js` instead). Full steps: [`permission denied` on install](#permission-denied-eacces-on-install). |
 | `✗ 1337x blocked` chip / dim `⚠ 1337x: … (HTTP 403)` footnote | The indexer answered with a Cloudflare challenge — common on VPN/datacenter IPs. Results from the other sources are unaffected. Retry, toggle your VPN, or drop the source: `--sources tpb,nyaa` (or the `providers` config key). |
 | IINA says it cannot open the file | The URL is passed positionally to `iina-cli`, so make sure it's installed (IINA menu → Install CLI Tool); quit IINA when done to trigger teardown. |
 | `no metadata after 45s — swarm looks dead` | Nobody is seeding. Pick a result with more seeders (the SEED column is color-coded; red = dead). |
