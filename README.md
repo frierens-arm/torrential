@@ -321,7 +321,7 @@ streaming.
 | `esc` / `q` | close the `/theme` picker · back / new search (including from the movie list) · stop streaming (stream) — wipes the cache unless `--keep` |
 | `Ctrl+C` | quit anywhere — kills the player, stops the engine, wipes the cache unless `--keep` |
 
-## What's new in 2.2
+## What's new in 2.1.1
 
 - **`--doctor`** — runtime, config warnings, cache writability, disk space,
   player detection, port availability and a live probe of every indexer in

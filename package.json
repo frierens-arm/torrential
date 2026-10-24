@@ -1,6 +1,6 @@
 {
   "name": "torrential",
-  "version": "2.2.0",
+  "version": "2.1.1",
   "description": "A torrential downpour in your terminal — search the swarm, stream instantly. torlink-inspired TUI fused with a programmatic WebTorrent streaming engine.",
   "type": "module",
   "bin": {
