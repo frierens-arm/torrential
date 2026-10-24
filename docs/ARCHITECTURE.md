@@ -64,14 +64,18 @@ the **Ink TUI** binds it all into one interactive surface.
 
 | Path | Responsibility |
 |---|---|
-| `src/cli.tsx` | Arg parsing (`--magnet`, `--player`, `--port`, `--sources`, `--mode`, `-k/--keep[=<dir>]`, `--keep-dir`, `--no-player`, `--list-players`, `--config`, `--keep-cache`, `--clear-cache`, `--turbo/--no-turbo`, `--max-conns`, `--upload-limit`, `--ram-cache`, `--help`, `--version`), config load + CLI overrides, `EngineHost` construction (client pre-warm at boot), `--list-players` utility, SIGINT → shutdown bridge, EPIPE safety. |
+| `src/cli.tsx` | Arg parsing (`--magnet`, `--player`, `--port`, `--sources`, `--mode`, `-k/--keep[=<dir>]`, `--keep-dir`, `--no-player`, `--list-players`, `--doctor`, `--offline`, `--debug[=<path>]`, `--config`, `--keep-cache`, `--clear-cache`, `--turbo/--no-turbo`, `--max-conns`, `--upload-limit`, `--ram-cache`, `--help`, `--version`), config load + CLI overrides, debug-log activation, metadata-cache pruning at boot, `EngineHost` construction (client pre-warm at boot), `--list-players` / `--doctor` utilities, SIGINT → shutdown bridge, EPIPE safety. |
+| `src/doctor.ts` | `--doctor`: one plain-text pass over runtime, paths, cache writability, disk space, player detection, port availability and a live probe of each indexer. Network probes are skipped with `--offline`; the report is safe to paste into a bug report and the command exits non-zero when a hard failure is found. |
 | `src/config.ts` | XDG/Windows paths, JSON load/validate/save with friendly warnings; defaults are materialized on first run. v1.2 speed keys: `turbo`, `max_conns`, `ram_cache_mb`, `upload_limit_kbps`, `head_start_mb`, `tail_prefetch_mb`, `window_secs`. `mode` (`auto` \| `tv` \| `movies`, default `auto`) is validated like `theme` — unknown values warn and fall back to `auto`. Legacy configs load unchanged (missing keys take defaults). |
 | `src/providers/*` | One module per indexer + `index.ts` aggregator. `runSearch()` accepts one query or a list (SxxExx / 1xx variants), fans every provider across all of them, dedupes cross-query, and shapes each row through `toTvResult()`: episodic rows get show/scope tags, non-episodic rows survive as GENERIC rows (`scope === undefined`) — tagged, not dropped, so the auto/movies modes can use them. `opts.mode` flows to providers: 1337x scrapes its TV category (`/category-search/<q>/TV/1/`) in tv mode and the plain catalogue search (`/search/<q>/1/`) in movies/auto (and as the mirror-compat fallback in tv mode). `ProviderInfo.kind` ('torrent' \| 'api') is the slot a future API-based backend plugs into. |
 | `src/engine/host.ts` | `EngineHost` — owns the session-wide WebTorrent client; constructed at boot so DHT bootstrap + first tracker announces happen before the user picks a result. Reused across streams; destroyed on app exit. |
 | `src/engine/stream.ts` | The streaming pipeline: metadata cache (load/save `.torrent` per info-hash), `client.add` (with `storeCacheSlots` RAM budget; `announce` merge for cached metadata, skipped for private torrents), **TV target resolution** (`StreamTarget`: auto / episode / exact file — `pickEpisodeFile()` matches SxxExx, 1xx and absolute numbering against FILE names; ambiguous multi-file packs flip to `awaitingFile` until `selectFile()` answers from the interactive picker), head-start + tail prefetch (`select(…, 3)` + `critical()`), server bring-up, stats at 4 Hz, teardown via `client.remove(torrent, { destroyStore: false })` so the client (and its warm DHT state) survives. |
-| `src/engine/turbo-server.ts` | Turbo HTTP serving layer: RFC 7233 Range parsing (206/416, suffix + open-ended + multi-range→first), HEAD/OPTIONS, always `Content-Length` (never chunked), no redirects, direct alias routes (`/stream`, `/stream.<ext>`, `/<fileIndex>`), canonical `/webtorrent/<hash>/<path>`, DLNA marker, CORS, `setNoDelay`/keep-alive socket hygiene, dual-stack bind with `127.0.0.1` fallback, playhead tracking (min read position across active connections), adaptive rolling window (priority-3 *stream selections* — exact-match removable, never clip the whole-file selection), stall escalation via `critical()`. Structurally typed against minimal interfaces so `tools/smoke-turbo.mjs` can exercise it with fakes. |
+| `src/engine/turbo-server.ts` | Turbo HTTP serving layer: RFC 7233 Range parsing (206/416, suffix + open-ended + multi-range→first), HEAD/OPTIONS, always `Content-Length` (never chunked), no redirects, direct alias routes (`/stream`, `/stream.<ext>`, `/<fileIndex>`), canonical `/webtorrent/<hash>/<path>`, DLNA marker, CORS, `setNoDelay`/keep-alive socket hygiene, dual-stack bind with `127.0.0.1` fallback, playhead tracking (`selectPlayhead()`: minimum position across *hot* readers, with a two-tier activity window so paused players and EOF probes cannot drag it), adaptive rolling window (priority-3 *stream selections* — exact-match removable, never clip the whole-file selection), stall escalation via `critical()`. Structurally typed against minimal interfaces so `tools/smoke-turbo.mjs` can exercise it with fakes. |
 | `src/utils/players.ts` | Player detection (memoized per session), launch chain resolution, spawn + graceful kill. Per-player argv: VLC gets `--play-and-exit` (+ `--network-caching=10000` when no user flags), mpv gets buffering defaults (`--cache-secs=90`, `--demuxer-readahead-secs=90`, …) when no user flags, IINA gets `iina-cli --no-stdin --keep-running <url>` (URL positional — unknown `--flags` are forwarded to mpv and break loading, verified against iina-cli's source). User `player_flags` always override the injected defaults. |
 | `src/utils/keep.ts` | `--keep` file rescue: collision-safe `rename()` with EXDEV copy+delete fallback. |
+| `src/utils/log.ts` | Opt-in debug logger. Path resolution (`--debug[=<path>]`, `TORRENTIAL_DEBUG`, `TORRENTIAL_LOG`), append-only ISO-timestamped lines, truncation at 2 MB, and a hard "never throw, never touch stdout" contract so a broken path cannot corrupt the TUI or slow a stream tick. |
+| `src/utils/state.ts` | `state.json`: recent-search history (20) and the last-watched episode per series (200 max). Pure, tolerant normalize/push/record helpers plus atomic write-then-rename persistence; corrupt files degrade to an empty state. |
+| `src/utils/cache.ts` | Metadata-cache layout (`<cache>/meta/<infoHash>.torrent`) and boot pruning: drop entries older than 30 days, cap at 300 by mtime, never throw, dry-run mode for diagnostics. |
 | `src/utils/sources.ts` | `--sources` flag parsing with aliases (`tpb` → `piratebay`…) and loud validation. |
 | `src/utils/format.ts` | Size/speed/ETA formatting, quality parsing, table padding helpers. |
 | `src/utils/tv.ts` | The episodic brain: `parseTvTitle()` regex battery (SxxExx, 1xx, 2x05, Season words, 2nd Season, absolute anime numbering, batch ranges, Complete Series), `toTvResult()` shaping, `buildSeriesIndex()` grouping (series → seasons → episodes + packs), `episodeQueries()` / `seasonQueries()` smart query generation, season/episode row builders for the TUI. |
@@ -79,6 +83,7 @@ the **Ink TUI** binds it all into one interactive surface.
 | `src/utils/http.ts` | `fetchText`/`fetchJson` with timeouts, browser-ish UA, friendly network errors. |
 | `src/utils/ascii.ts` | Wordmark variants (ANSI Shadow / double-block / Calvin S), spinner + wave frames, gradient math. |
 | `src/ui/*` | Screens (`SearchScreen`, `SeriesScreen`, `SeasonScreen`, `EpisodeScreen`, `DetailScreen`, `FilePickerScreen`, `StreamScreen`), animated components (`Logo`, `Spinner`, `WaveLine`, `ProgressBar`, `TextInput`, `ProviderChips`), hooks (`useTerminalSize`, `useTick`). |
+| `src/ui/hooks/*` | Session logic pulled out of `App.tsx`: `useSearch` (provider aggregator, dedupe, supplemental hunts, status chips), `useStreamSession` (engine + player hand-off + teardown), `usePreferences` (skin picker, `/theme`, `/mode`, session content mode). Callbacks travel through refs so in-flight searches/streams are never restarted by a re-render. |
 | `src/webtorrent.d.ts` | Ambient typings for the exact webtorrent surface used. |
 
 ## Data flows
@@ -234,6 +239,22 @@ waits for that (press `q` in the TUI to force it earlier).
   from one indexer shows a compact `✗ <source> blocked` chip (category word
   from `shortProviderError`), with the full message moved to a dim footnote
   under the results table. Only an all-sources failure gets the big red block.
+
+## Tests
+
+`test/*.test.ts` uses Node's built-in runner through `tsx` (`npm test`; the
+file list is expanded in `tools/run-tests.mjs` so Windows works too). It covers
+the TV parser and series index, the classifier vote, RFC 7233 Range parsing,
+playhead selection (hot vs. idle readers), config validation warnings, the
+history/last-watched ledger, metadata-cache pruning and the doctor report.
+
+Behavioural smokes stay in `tools/`: `smoke-turbo.mjs` (HTTP matrix against
+fake torrents), `classify-smoke.mjs`, `tv-smoke.mjs`, `render-smoke.tsx`,
+`tv-render.mjs`, and `app-smoke.tsx`, which mounts the real `App` headlessly
+and asserts history recall plus the `state.json` round-trip.
+
+CI runs both sets on Linux/macOS/Windows × Node 22/24. A `v*` tag publishes to
+npm with provenance and attaches the tarball to the GitHub release.
 
 ## Adding a provider
 

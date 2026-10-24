@@ -4,6 +4,7 @@ import { x1337Provider } from './x1337.js'
 import { nyaaProvider } from './nyaa.js'
 import { toTvResult } from '../utils/tv.js'
 import { classifyTitle } from '../utils/classify.js'
+import { log, logError } from '../utils/log.js'
 
 export const ALL_PROVIDERS: Provider[] = [piratebayProvider, x1337Provider, nyaaProvider]
 
@@ -48,9 +49,13 @@ export async function* runSearch(
     .filter((p): p is Provider => p !== undefined)
 
   if (enabled.length === 0 || queries.length === 0) {
+    log('search:empty', { providers: opts.providers, queries })
     yield { type: 'all-done' }
     return
   }
+
+  const searchStartedAt = Date.now()
+  log('search:start', { queries, providers: enabled.map(p => p.info.id), mode: opts.mode ?? 'auto' })
 
   type Queued = SearchEvent
   const queue: Queued[] = []
@@ -83,6 +88,7 @@ export async function* runSearch(
     if (first) push({ type: 'provider-start', provider: provider.info })
 
     void (async () => {
+      const providerStartedAt = Date.now()
       let rows: SearchResult[] = []
       let failure: string | null = null
       try {
@@ -107,6 +113,13 @@ export async function* runSearch(
         failure = err instanceof Error ? err.message : String(err)
       }
 
+      log('search:provider', {
+        provider: id,
+        query,
+        rows: rows.length,
+        tookMs: Date.now() - providerStartedAt,
+        error: failure
+      })
       if (failure !== null) providerErrors.set(id, failure)
       if (rows.length > 0) {
         providerRows.set(id, (providerRows.get(id) ?? 0) + rows.length)
@@ -124,7 +137,10 @@ export async function* runSearch(
         }
         push({ type: 'provider-done', provider: provider.info, count: total })
         pendingQueries.delete(id)
-        if (pendingQueries.size === 0) push({ type: 'all-done' })
+        if (pendingQueries.size === 0) {
+          log('search:done', { queries, tookMs: Date.now() - searchStartedAt })
+          push({ type: 'all-done' })
+        }
       }
     })()
   }

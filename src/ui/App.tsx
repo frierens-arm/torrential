@@ -1,31 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useApp, useInput } from 'ink'
-import type { ChildProcess } from 'node:child_process'
-import type {
-  KeptFile,
-  ProviderStatus,
-  ReadyInfo,
-  SearchMode,
-  SearchResult,
-  StreamStats,
-  StreamTarget
-} from '../types.js'
+import { useInput } from 'ink'
+import type { SearchResult, StreamTarget } from '../types.js'
 import type { TorrentialConfig } from '../config.js'
-import { runSearch, resultKey, providerInfos } from '../providers/index.js'
-import { StreamEngine } from '../engine/stream.js'
 import type { EngineHost } from '../engine/host.js'
-import { setTheme, normalizeThemeName, themeId, themeList } from '../themes.js'
 import { parseSlashCommand } from '../utils/commands.js'
-import { loadConfig, saveConfig, normalizeModeName } from '../config.js'
-import { MODE_IDS } from '../constants.js'
-import {
-  resolveLaunchChain,
-  trySpawnPlayer,
-  killPlayer,
-  type PlayerLaunch
-} from '../utils/players.js'
 import { looksLikeTorrentId } from '../utils/magnet.js'
-import { formatBytes, truncateStart } from '../utils/format.js'
 import {
   buildSeriesIndex,
   seriesSummaries,
@@ -43,6 +22,7 @@ import {
   type SeriesSummary
 } from '../utils/tv.js'
 import { classifyQuery, classifyTitle, voteKind } from '../utils/classify.js'
+import { lastWatchedFor, loadState, pushHistory, recordWatched, saveState, type SessionState } from '../utils/state.js'
 import { SearchScreen } from './screens/SearchScreen.js'
 import { SeriesScreen } from './screens/SeriesScreen.js'
 import { MovieResultsScreen } from './screens/MovieResultsScreen.js'
@@ -50,7 +30,10 @@ import { SeasonScreen } from './screens/SeasonScreen.js'
 import { EpisodeScreen } from './screens/EpisodeScreen.js'
 import { DetailScreen } from './screens/DetailScreen.js'
 import { FilePickerScreen } from './screens/FilePickerScreen.js'
-import { StreamScreen, type PlayerInfo } from './screens/StreamScreen.js'
+import { StreamScreen } from './screens/StreamScreen.js'
+import { useSearch } from './hooks/useSearch.js'
+import { useStreamSession } from './hooks/useStreamSession.js'
+import { usePreferences } from './hooks/usePreferences.js'
 
 type Screen = 'search' | 'results' | 'series' | 'season' | 'episode' | 'detail' | 'files' | 'stream'
 
@@ -94,8 +77,6 @@ export interface AppProps {
   onRegisterShutdown: (fn: () => Promise<void>) => void
 }
 
-const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
-
 export function App({
   config,
   host,
@@ -108,8 +89,6 @@ export function App({
   warnings,
   onRegisterShutdown
 }: AppProps): React.ReactElement {
-  const { exit } = useApp()
-
   // Boot screen by content mode: tv keeps the 2.0.0 series landing;
   // movies goes straight to the flat list; auto waits on the search bar
   // until the first results batch votes (classifier router below).
@@ -122,22 +101,14 @@ export function App({
   })
   const [query, setQuery] = useState(initialQuery)
   const [searchSeq, setSearchSeq] = useState(0)
-  const [statuses, setStatuses] = useState<ProviderStatus[]>(() =>
-    providerInfos()
-      .filter(p => config.providers.includes(p.id))
-      .map(p => ({ ...p, state: 'pending' as const, count: 0 }))
-  )
 
   /* ── tier navigation state ── */
-  const [allResults, setAllResults] = useState<SearchResult[]>([])
   const [seriesSelected, setSeriesSelected] = useState(0)
   const [currentSeriesKey, setCurrentSeriesKey] = useState<string | null>(null)
   const [seasonSelected, setSeasonSelected] = useState(0)
   const [currentSeasonRef, setCurrentSeasonRef] = useState<SeasonRef | null>(null)
   const [episodeSelected, setEpisodeSelected] = useState(0)
   const [detail, setDetail] = useState<DetailCtx | null>(null)
-  /** Supplemental smart-hunt label ("hunting S02E05…"). */
-  const [hunting, setHunting] = useState<string | null>(null)
 
   /* ── movie-path state (auto/movies modes) ── */
   const [movieSelected, setMovieSelected] = useState(0)
@@ -146,26 +117,65 @@ export function App({
   /** Auto-mode router fires once per search — on the first results batch. */
   const routedRef = useRef(false)
 
-  /* ── streaming state ── */
-  const [stats, setStats] = useState<StreamStats | null>(null)
-  const [player, setPlayer] = useState<PlayerInfo | null>(null)
-  const [keepNote, setKeepNote] = useState<string | null>(null)
-  const [themeNote, setThemeNote] = useState<{ kind: 'ok' | 'err' | 'info'; text: string } | null>(null)
-  const [showThemeList, setShowThemeList] = useState(false)
-  const [themeCursor, setThemeCursor] = useState(() => {
-    const idx = themeList().findIndex(t => t.id === themeId())
-    return idx >= 0 ? idx : 0
-  })
-  /** Session content mode — live so /mode applies without a restart. */
-  const [mode, setMode] = useState<SearchMode>(config.mode)
+  /* ── continuity: search history + where you left off ── */
+  const [sessionState, setSessionState] = useState<SessionState>(() => loadState())
+  /** "next up: E02 — ⏎ to play" line on the pre-flight card. */
+  const [nextNote, setNextNote] = useState<string | null>(null)
+  /** Guards the resume-cursor nudge so it fires once per season, not per render. */
+  const resumeAppliedRef = useRef<string | null>(null)
 
-  const engineRef = useRef<StreamEngine | null>(null)
-  const playerChildRef = useRef<ChildProcess | null>(null)
-  const shuttingDownRef = useRef(false)
-  const tearingDownRef = useRef(false)
-  const seenRef = useRef(new Set<string>())
-  /** hunt keys already fired (per main search). */
-  const huntedRef = useRef(new Set<string>())
+  const prefs = usePreferences(config.mode, configFile)
+  const mode = prefs.mode
+  const { applyThemeCommand, applyModeCommand, setNote, closeThemeList } = prefs
+
+  /* Refs so the stable stream/search callbacks always read current state. */
+  const modeRef = useRef(mode)
+  const detailRef = useRef(detail)
+  const movieDetailIndexRef = useRef(movieDetailIndex)
+  const allResultsLenRef = useRef(0)
+  const seriesRef = useRef<SeriesData | null>(null)
+  const progressRef = useRef(0)
+  const lastPlayedRef = useRef<{ seriesKey: string; season: number | null; episode: number } | null>(null)
+  modeRef.current = mode
+  detailRef.current = detail
+  movieDetailIndexRef.current = movieDetailIndex
+
+  /* ------------------------------------------------------------------ *
+   * Search + supplemental hunts (hooks/useSearch)
+   * ------------------------------------------------------------------ */
+
+  const { statuses, allResults, hunting, hunt, resetResults } = useSearch({
+    query,
+    searchSeq,
+    mode,
+    config,
+    onFirstBatch: rows => {
+      // ── auto-mode router: the FIRST batch decides, once ──
+      if (modeRef.current !== 'auto' || routedRef.current) return
+      routedRef.current = true
+      const classes = rows.map(r =>
+        r.media
+          ? { kind: r.media.kind, confidence: r.media.confidence, signals: ['row-media'] }
+          : classifyTitle(r.title)
+      )
+      const vote = voteKind(classes)
+      let winner = vote.kind
+      if (winner === 'unknown') {
+        // Mild prior: a bare query with a year leans movie when the swarm
+        // answered with uninformative rows.
+        const prior = classifyQuery(query)
+        if (prior.kind === 'movie' && prior.confidence >= 0.5) winner = 'movie'
+      }
+      setScreen(winner === 'movie' ? 'results' : 'series')
+    },
+    onEmpty: () => {
+      // Zero rows anywhere → 2.0.0's empty series screen.
+      if (modeRef.current === 'auto' && !routedRef.current) {
+        routedRef.current = true
+        setScreen('series')
+      }
+    }
+  })
 
   /* ------------------------------------------------------------------ *
    * Derived TV index — series → seasons → episodes, rebuilt whenever
@@ -199,6 +209,9 @@ export function App({
     [currentSeries, currentSeasonRef]
   )
 
+  allResultsLenRef.current = allResults.length
+  seriesRef.current = currentSeries
+
   /** Detail candidates, derived live so hunts can extend them underfoot. */
   const detailTorrents = useMemo(() => {
     if (!detail || !currentSeries) return []
@@ -216,257 +229,78 @@ export function App({
     if (ref.kind === 'complete') return 'Complete series packs'
     if (ref.kind === 'unsorted') return 'Episodes (no season tag)'
     if (ref.kind === 'season' && data) {
-      const label = ref.season === 0 ? 'Specials' : `Season ${ref.season}`
-      if (data.show) return label
-      return label
+      return ref.season === 0 ? 'Specials' : `Season ${ref.season}`
     }
     return 'Season'
   }
 
-  /** Human line for a file --keep rescued out of the cache. */
-  const describeKept = (kept: KeptFile): string => {
-    const pct = Math.floor((kept.progress ?? 0) * 100)
-    const completeness = (kept.progress ?? 0) < 0.999 ? `${pct}% downloaded` : 'complete'
-    return `saved → ${truncateStart(kept.destPath, 64)} (${formatBytes(kept.sizeBytes)}, ${completeness})`
-  }
-
   /* ------------------------------------------------------------------ *
-   * Search: consume the streaming aggregator as events land, then keep
-   * absorbing rows from supplemental SxxExx / 1xx hunts.
+   * Streaming lifecycle (hooks/useStreamSession)
    * ------------------------------------------------------------------ */
 
-  const absorbResults = useCallback((rows: SearchResult[]): void => {
-    const fresh = rows.filter(r => {
-      const key = resultKey(r)
-      if (seenRef.current.has(key)) return false
-      seenRef.current.add(key)
-      return true
-    })
-    if (fresh.length > 0) setAllResults(prev => [...prev, ...fresh])
-  }, [])
+  const stream = useStreamSession({
+    config,
+    host,
+    noPlayer,
+    playerOverride,
+    keep,
+    onBegin: () => setScreen('stream'),
+    onStreamed: (_torrentId, target: StreamTarget) => {
+      // A movie / magnet / pack stream must never trigger next-episode logic.
+      if (target.kind !== 'episode') {
+        lastPlayedRef.current = null
+        progressRef.current = 0
+        return
+      }
+      const ctx = detailRef.current
+      if (!ctx || ctx.episode === null) return
+      const season = ctx.ref.kind === 'season' ? ctx.ref.season : null
+      lastPlayedRef.current = { seriesKey: ctx.seriesKey, season, episode: target.episode }
+      progressRef.current = 0
+      setSessionState(prev => recordWatched(prev, ctx.seriesKey, { season, episode: target.episode }))
+    },
+    onTeardown: () => {
+      // Auto-advance only when the episode really finished: bailing out at
+      // 40% must leave the pre-flight card exactly where it was.
+      const finished = progressRef.current >= 0.95
+      const last = lastPlayedRef.current
+      const series = seriesRef.current
+      let advanced = false
+      if (finished && last && series && last.seriesKey === series.key) {
+        const bucket = last.season === null ? series.unsorted : series.seasons.get(last.season)
+        const episodes = bucket ? [...bucket.episodes.keys()].sort((a, b) => a - b) : []
+        const next = episodes.find(episode => episode > last.episode)
+        if (next !== undefined) {
+          const ref: SeasonRef =
+            last.season === null ? { kind: 'unsorted' } : { kind: 'season', season: last.season }
+          setDetail({ seriesKey: series.key, ref, episode: next, index: 0, from: 'episode' })
+          setNextNote(`finished E${pad2(last.episode)} — next up E${pad2(next)} · ⏎ to play`)
+          advanced = true
+        }
+      }
+      if (advanced) lastPlayedRef.current = null
+
+      // Land back where the stream was launched from — the detail pre-flight
+      // (n/p to another torrent), the series browser, the movie list, or the
+      // search bar.
+      setScreen(prev => {
+        if (prev !== 'stream' && prev !== 'files') return prev
+        if (advanced || detailRef.current || movieDetailIndexRef.current !== null) return 'detail'
+        if (allResultsLenRef.current > 0) return modeRef.current === 'movies' ? 'results' : 'series'
+        return 'search'
+      })
+    }
+  })
+  const { stats, player, keepNote, clearKeepNote, beginStream, teardownStream, selectFile, shutdown } = stream
 
   useEffect(() => {
-    if (!query) return
-    const enabledIds = new Set(config.providers)
-    setStatuses(
-      providerInfos()
-        .filter(p => enabledIds.has(p.id))
-        .map(p => ({ ...p, state: 'pending' as const, count: 0 }))
-    )
-    seenRef.current = new Set<string>()
-    huntedRef.current = new Set<string>()
-    routedRef.current = false
-    setAllResults([])
-    setHunting(null)
+    if (stats) progressRef.current = stats.progress
+  }, [stats])
 
-    let cancelled = false
-    void (async () => {
-      try {
-        const events = runSearch(query, {
-          providers: config.providers,
-          timeoutMs: config.search_timeout * 1000,
-          x1337Mirrors: config.x1337_mirrors,
-          mode
-        })
-        for await (const event of events) {
-          if (cancelled) return
-          switch (event.type) {
-            case 'provider-start':
-              setStatuses(prev =>
-                prev.map(s => (s.id === event.provider.id ? { ...s, state: 'running' } : s))
-              )
-              break
-            case 'provider-done':
-              setStatuses(prev =>
-                prev.map(s =>
-                  s.id === event.provider.id ? { ...s, state: 'done', count: event.count } : s
-                )
-              )
-              break
-            case 'provider-error':
-              setStatuses(prev =>
-                prev.map(s =>
-                  s.id === event.provider.id ? { ...s, state: 'error', error: event.error } : s
-                )
-              )
-              break
-            case 'results': {
-              absorbResults(event.results)
-              // ── auto-mode router: the FIRST batch decides, once ──
-              // Movie-majority → flat list; episode/pack-majority or
-              // unknown → today's series path (silent degradation: a
-              // classifier miss must look exactly like 2.0.0).
-              if (mode === 'auto' && !routedRef.current) {
-                routedRef.current = true
-                const classes = event.results.map(r =>
-                  r.media
-                    ? { kind: r.media.kind, confidence: r.media.confidence, signals: ['row-media'] }
-                    : classifyTitle(r.title)
-                )
-                const vote = voteKind(classes)
-                let winner = vote.kind
-                if (winner === 'unknown') {
-                  // Mild prior: a bare query with a year leans movie when
-                  // the swarm answered with uninformative rows.
-                  const prior = classifyQuery(query)
-                  if (prior.kind === 'movie' && prior.confidence >= 0.5) winner = 'movie'
-                }
-                setScreen(winner === 'movie' ? 'results' : 'series')
-              }
-              break
-            }
-            case 'all-done':
-              // Zero rows anywhere → 2.0.0's empty series screen.
-              if (mode === 'auto' && !routedRef.current) {
-                routedRef.current = true
-                setScreen('series')
-              }
-              return
-          }
-        }
-      } catch {
-        // Provider-level failures already surface through statuses.
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, searchSeq])
-
-  /* ------------------------------------------------------------------ *
-   * Smart supplemental hunts — inject SxxExx / 1xx nomenclature the
-   * moment a view looks thin, and merge the answers into the index.
-   * ------------------------------------------------------------------ */
-
-  const hunt = useCallback(
-    (key: string, queries: string[], label: string): void => {
-      if (huntedRef.current.has(key)) return
-      huntedRef.current.add(key)
-      setHunting(label)
-      void (async () => {
-        try {
-          const events = runSearch(queries, {
-            providers: config.providers,
-            timeoutMs: config.search_timeout * 1000,
-            x1337Mirrors: config.x1337_mirrors,
-            mode
-          })
-          for await (const event of events) {
-            if (event.type === 'results') absorbResults(event.results)
-            if (event.type === 'all-done') break
-          }
-        } catch {
-          /* best effort — the view just stays as thin as it was */
-        } finally {
-          setHunting(null)
-        }
-      })()
-    },
-    [absorbResults, config.providers, config.search_timeout, config.x1337_mirrors, mode]
-  )
-
-  /* ------------------------------------------------------------------ *
-   * Streaming lifecycle
-   * ------------------------------------------------------------------ */
-
-  const teardownStream = useCallback(async (): Promise<void> => {
-    if (tearingDownRef.current) return
-    tearingDownRef.current = true
-    const child = playerChildRef.current
-    playerChildRef.current = null
-    const engine = engineRef.current
-    engineRef.current = null
-    setPlayer(null)
-    if (child) await Promise.race([killPlayer(child), delay(2500)])
-    if (engine) await Promise.race([engine.stop(), delay(3000)])
-    tearingDownRef.current = false
-    // Land back where the stream was launched from — the detail pre-flight
-    // (n/p to another torrent), the series browser, the movie list, or the
-    // search bar.
-    setScreen(prev => {
-      if (prev !== 'stream' && prev !== 'files') return prev
-      if (detail || movieDetailIndex !== null) return 'detail'
-      if (allResults.length > 0) return mode === 'movies' ? 'results' : 'series'
-      return 'search'
-    })
-  }, [detail, movieDetailIndex, allResults.length, mode])
-
-  const beginStream = useCallback(
-    (torrentId: string, target: StreamTarget = { kind: 'auto' }): void => {
-      setStats(null)
-      setPlayer(null)
-      setScreen('stream')
-
-      const engine = new StreamEngine({
-        host,
-        cacheDir: config.cache_directory,
-        port: config.port,
-        metadataTimeoutMs: config.metadata_timeout * 1000,
-        keepCache: config.keep_cache,
-        keepDir: keep ? config.keep_directory : null,
-        turbo: config.turbo,
-        ramCacheMB: config.ram_cache_mb,
-        headStartBytes: config.head_start_mb * 1_000_000,
-        tailPrefetchBytes: config.tail_prefetch_mb * 1_000_000,
-        windowSecs: config.window_secs
-      })
-      engineRef.current = engine
-      engine.on('stats', s => setStats(s))
-      engine.on('error', () => {
-        /* stats carries the error surfaced in the UI */
-      })
-      engine.on('stopped', kept => {
-        if (kept) setKeepNote(describeKept(kept))
-      })
-
-      engine.on('ready', (info: ReadyInfo) => {
-        if (noPlayer) {
-          setPlayer({ label: 'none (--no-player) — open the endpoint above', detached: true })
-          return
-        }
-        const preference = playerOverride ?? config.default_player
-        const { chain, note } = resolveLaunchChain(
-          preference,
-          config.player_fallbacks,
-          info.url,
-          config.player_flags
-        )
-        if (chain.length === 0) {
-          setPlayer({
-            label: 'no player found — open the endpoint above manually',
-            detached: true,
-            note:
-              'install mpv or vlc (see README) or set default_player / --player to a binary you have'
-          })
-          return
-        }
-        void trySpawnPlayer(chain).then(({ child, launch }: { child: ChildProcess | null; launch: PlayerLaunch | null }) => {
-          if (!child || !launch) {
-            setPlayer({
-              label: 'player launch failed — open the endpoint above manually',
-              detached: true,
-              note
-            })
-            return
-          }
-          playerChildRef.current = child
-          setPlayer({ label: launch.name, detached: launch.detached, note })
-          if (!launch.detached) {
-            child.once('exit', () => {
-              // Player window closed → stop streaming, keep the TUI alive.
-              void teardownStream()
-            })
-          }
-        })
-      })
-
-      engine.start(torrentId, target).catch(() => {
-        /* stats.phase === 'error' drives the error block in the UI */
-      })
-    },
-    [config, noPlayer, playerOverride, teardownStream, keep, host]
-  )
+  /* Persist history / last-watched. Failures are logged and ignored. */
+  useEffect(() => {
+    saveState(sessionState)
+  }, [sessionState])
 
   /* Multi-file torrents flip the UI into the interactive file picker. */
   useEffect(() => {
@@ -479,103 +313,28 @@ export function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stats])
 
+  /**
+   * Resume: when the episode grid for a season opens, park the cursor on the
+   * last episode streamed from that season. Runs once per (series, season) so
+   * it never fights the user's own j/k movement afterwards. Absolute-numbered
+   * shows use the 'unsorted' bucket, whose season is null.
+   */
+  useEffect(() => {
+    if (screen !== 'episode' || !currentSeries || !currentSeasonRef) return
+    const seasonOf = currentSeasonRef.kind === 'season' ? currentSeasonRef.season : currentSeasonRef.kind === 'unsorted' ? null : undefined
+    if (seasonOf === undefined) return
+    const key = `${currentSeries.key}:${seasonOf ?? 'absolute'}`
+    if (resumeAppliedRef.current === key) return
+    resumeAppliedRef.current = key
+    const watched = lastWatchedFor(sessionState, currentSeries.key)
+    if (!watched || watched.season !== seasonOf) return
+    const index = episodeRows.findIndex(row => row.episode === watched.episode)
+    if (index >= 0) setEpisodeSelected(index)
+  }, [screen, currentSeries, currentSeasonRef, episodeRows, sessionState])
+
   /* ------------------------------------------------------------------ *
    * Navigation handlers
    * ------------------------------------------------------------------ */
-
-  /** Apply a skin from the search bar (or picker) and persist it to the config file. */
-  const applyThemeById = useCallback(
-    (id: string): void => {
-      if (id === themeId()) {
-        setShowThemeList(false)
-        setThemeNote({ kind: 'info', text: `skin "${id}" is already active` })
-        return
-      }
-      setTheme(id)
-      let savedNote = ''
-      try {
-        // Reload from disk so we never persist session-only CLI overrides.
-        const fresh = loadConfig(configFile)
-        saveConfig({ ...fresh.config, theme: id }, configFile)
-        savedNote = ' · saved to config'
-      } catch (err) {
-        savedNote = ` · could not save: ${(err as Error).message}`
-      }
-      setShowThemeList(false)
-      setThemeNote({ kind: 'ok', text: `skin applied: ${id}${savedNote}` })
-    },
-    [configFile]
-  )
-
-  /** /theme (no arg) → open the live picker, cursor parked on the active skin. */
-  const openThemeList = useCallback((): void => {
-    setShowThemeList(true)
-    setThemeNote(null)
-    const idx = themeList().findIndex(t => t.id === themeId())
-    setThemeCursor(idx >= 0 ? idx : 0)
-  }, [])
-
-  const applyThemeCommand = useCallback(
-    (arg: string | undefined): void => {
-      if (!arg) {
-        openThemeList()
-        return
-      }
-      const id = normalizeThemeName(arg)
-      if (!id) {
-        setShowThemeList(false)
-        setThemeNote({
-          kind: 'err',
-          text: `unknown skin "${arg}" — available: ${themeList().map(t => t.id).join(', ')}`
-        })
-        return
-      }
-      applyThemeById(id)
-    },
-    [applyThemeById, openThemeList]
-  )
-
-  /** Apply a content mode from the search bar and persist it to the config file. */
-  const applyModeById = useCallback(
-    (id: SearchMode): void => {
-      if (id === mode) {
-        setThemeNote({ kind: 'info', text: `mode "${id}" is already active` })
-        return
-      }
-      setMode(id)
-      let savedNote = ''
-      try {
-        // Reload from disk so we never persist session-only CLI overrides.
-        const fresh = loadConfig(configFile)
-        saveConfig({ ...fresh.config, mode: id }, configFile)
-        savedNote = ' · saved to config'
-      } catch (err) {
-        savedNote = ` · could not save: ${(err as Error).message}`
-      }
-      setThemeNote({ kind: 'ok', text: `mode applied: ${id}${savedNote}` })
-    },
-    [configFile, mode]
-  )
-
-  /** /mode (no arg) → show the current mode + choices, /mode <name> → apply + save. */
-  const applyModeCommand = useCallback(
-    (arg: string | undefined): void => {
-      if (!arg) {
-        setThemeNote({
-          kind: 'info',
-          text: `mode: ${mode} — choices: ${MODE_IDS.join(' · ')} (usage: /mode <${MODE_IDS.join('|')}>)`
-        })
-        return
-      }
-      const id = normalizeModeName(arg)
-      if (!id) {
-        setThemeNote({ kind: 'err', text: `unknown mode "${arg}" — choices: ${MODE_IDS.join(' · ')}` })
-        return
-      }
-      applyModeById(id)
-    },
-    [applyModeById, mode]
-  )
 
   const submitSearch = useCallback(
     (text: string): void => {
@@ -591,36 +350,42 @@ export function App({
         return
       }
       if (cmd?.kind === 'unknown') {
-        setThemeNote({ kind: 'err', text: `unknown command "/${cmd.name}" — try /theme <name> or /mode <auto|tv|movies>` })
+        setNote({
+          kind: 'err',
+          text: `unknown command "/${cmd.name}" — try /theme <name> or /mode <auto|tv|movies>`
+        })
         return
       }
       const torrentId = looksLikeTorrentId(trimmed)
       if (torrentId) {
-        setKeepNote(null) // last rescue line expires on a fresh hunt
-        setThemeNote(null)
-        setShowThemeList(false)
+        clearKeepNote() // last rescue line expires on a fresh hunt
+        setNote(null)
+        closeThemeList()
         setDetail(null)
         beginStream(torrentId)
         return
       }
-      setKeepNote(null) // last rescue line expires on a fresh hunt
-      setThemeNote(null) // command feedback expires too
-      setShowThemeList(false)
-      setAllResults([])
+      clearKeepNote() // last rescue line expires on a fresh hunt
+      setNote(null) // command feedback expires too
+      closeThemeList()
+      resetResults()
       setSeriesSelected(0)
       setMovieSelected(0)
       setMovieDetailIndex(null)
       setDetail(null)
+      setNextNote(null)
+      resumeAppliedRef.current = null
       setCurrentSeriesKey(null)
       setCurrentSeasonRef(null)
       setQuery(trimmed)
-      setSearchSeq(s => s + 1)
+      setSearchSeq(seq => seq + 1)
+      setSessionState(prev => pushHistory(prev, trimmed))
       // Landing screen by content mode: tv keeps 2.0.0's series tiers;
       // movies goes to the flat list; auto stays put until the first
-      // results batch votes (see the router in the search effect).
+      // results batch votes (see the router above).
       setScreen(mode === 'tv' ? 'series' : mode === 'movies' ? 'results' : 'search')
     },
-    [beginStream, applyThemeCommand, applyModeCommand, mode]
+    [applyModeCommand, applyThemeCommand, beginStream, clearKeepNote, closeThemeList, mode, resetResults, setNote]
   )
 
   /* ── movie path: pick a row → pre-flight card over the movie list ── */
@@ -628,6 +393,7 @@ export function App({
     (result: SearchResult): void => {
       const index = Math.max(0, movieRows.findIndex(r => r.id === result.id))
       setMovieDetailIndex(index)
+      setNextNote(null)
       setScreen('detail')
     },
     [movieRows]
@@ -637,6 +403,7 @@ export function App({
   const pickSeries = useCallback((summary: SeriesSummary): void => {
     setCurrentSeriesKey(summary.key)
     setSeasonSelected(0)
+    setNextNote(null)
     setScreen('season')
   }, [])
 
@@ -646,10 +413,11 @@ export function App({
       if (!currentSeries) return
       setCurrentSeasonRef(ref)
       setEpisodeSelected(0)
+      setNextNote(null)
       setScreen('episode')
 
       // Smart hunt: a season with no pack coverage gets Sxx / "season N"
-      // queries injected so packs and straggl episodes surface.
+      // queries injected so packs and straggler episodes surface.
       if (ref.kind === 'season') {
         const packs = packsForSeason(currentSeries, ref)
         const bucket = currentSeries.seasons.get(ref.season)
@@ -678,6 +446,7 @@ export function App({
         index: 0,
         from: 'episode'
       })
+      setNextNote(null)
       setScreen('detail')
 
       // Smart hunt: thin candidate lists get the exact SxxExx / 1xx forms.
@@ -707,6 +476,7 @@ export function App({
         index,
         from: 'season'
       })
+      setNextNote(null)
       setScreen('detail')
     },
     [currentSeries, currentSeasonRef]
@@ -721,10 +491,13 @@ export function App({
   )
 
   /* ── file picker answers ── */
-  const pickFile = useCallback((fileIndex: number): void => {
-    engineRef.current?.selectFile(fileIndex)
-    setScreen('stream')
-  }, [])
+  const pickFile = useCallback(
+    (fileIndex: number): void => {
+      selectFile(fileIndex)
+      setScreen('stream')
+    },
+    [selectFile]
+  )
 
   /* ------------------------------------------------------------------ *
    * Cursor hygiene: keep selections valid when result sets shift under
@@ -753,20 +526,6 @@ export function App({
    * Global shutdown (ctrl+c in-TUI + SIGINT from cli.ts)
    * ------------------------------------------------------------------ */
 
-  const shutdown = useCallback(async (): Promise<void> => {
-    if (shuttingDownRef.current) return
-    shuttingDownRef.current = true
-    const child = playerChildRef.current
-    const engine = engineRef.current
-    playerChildRef.current = null
-    engineRef.current = null
-    if (child) void killPlayer(child)
-    if (engine) await Promise.race([engine.stop(), delay(2500)])
-    // The shared client is destroyed only on app exit.
-    await Promise.race([host.destroy(), delay(3500)])
-    exit()
-  }, [exit, host])
-
   useEffect(() => {
     onRegisterShutdown(shutdown)
   }, [onRegisterShutdown, shutdown])
@@ -790,21 +549,30 @@ export function App({
    * Screen router
    * ------------------------------------------------------------------ */
 
+  // ▶ marker: only for the season (or absolute bucket) actually watched.
+  const watchedForSeries = currentSeries ? lastWatchedFor(sessionState, currentSeries.key) : null
+  let resumeEpisode: number | null = null
+  if (watchedForSeries && currentSeasonRef) {
+    if (currentSeasonRef.kind === 'season' && watchedForSeries.season === currentSeasonRef.season) {
+      resumeEpisode = watchedForSeries.episode
+    } else if (currentSeasonRef.kind === 'unsorted' && watchedForSeries.season === null) {
+      resumeEpisode = watchedForSeries.episode
+    }
+  }
+
   const searchScreen = (
     <SearchScreen
       initialQuery={query}
       onSubmit={submitSearch}
       warnings={warnings}
+      history={sessionState.history}
       keepNote={keepNote}
-      themeNote={themeNote}
-      showThemeList={showThemeList}
-      themeCursor={themeCursor}
-      onThemeCursor={setThemeCursor}
-      onThemePick={applyThemeById}
-      onThemeClose={() => {
-        setShowThemeList(false)
-        setThemeNote(null)
-      }}
+      themeNote={prefs.note}
+      showThemeList={prefs.showThemeList}
+      themeCursor={prefs.themeCursor}
+      onThemeCursor={prefs.setThemeCursor}
+      onThemePick={prefs.applyThemeById}
+      onThemeClose={prefs.closeThemeList}
     />
   )
 
@@ -859,6 +627,7 @@ export function App({
           rows={episodeRows}
           packs={seasonPacks}
           hunting={hunting}
+          resumeEpisode={resumeEpisode}
           selected={episodeSelected}
           onSelected={setEpisodeSelected}
           onPickEpisode={pickEpisode}
@@ -911,6 +680,7 @@ export function App({
           }
           onStream={streamResult}
           hunting={hunting}
+          note={nextNote}
           onBack={() => setScreen(detail.from)}
         />
       ) : (

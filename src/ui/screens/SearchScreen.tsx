@@ -13,6 +13,8 @@ export interface SearchScreenProps {
   initialQuery: string
   onSubmit: (text: string) => void
   warnings: string[]
+  /** Recent queries, newest first. ↑/↓ recalls them like a shell. */
+  history?: string[]
   /** "saved → …" line shown after a --keep teardown. */
   keepNote?: string | null
   /** Feedback from a slash command (/theme, /mode, or unknown). */
@@ -41,6 +43,7 @@ export function SearchScreen({
   initialQuery,
   onSubmit,
   warnings,
+  history = [],
   keepNote,
   themeNote,
   showThemeList,
@@ -51,8 +54,34 @@ export function SearchScreen({
 }: SearchScreenProps): React.ReactElement {
   const { width, height } = useTerminalSize()
   const [value, setValue] = useState(initialQuery)
+  /** index into `history` while recalling; null = editing fresh text. */
+  const [historyCursor, setHistoryCursor] = useState<number | null>(null)
   const rows = themeList()
   const last = rows.length - 1
+
+  // Shell-style recall: ↑ walks back through recent searches, ↓ walks
+  // forward and finally clears. The theme picker owns the keyboard when it
+  // is open, so this handler stays out of its way.
+  useInput((_input, key) => {
+    if (showThemeList || history.length === 0) return
+    if (key.upArrow) {
+      const next = historyCursor === null ? 0 : Math.min(history.length - 1, historyCursor + 1)
+      setHistoryCursor(next)
+      setValue(history[next] ?? value)
+      return
+    }
+    if (key.downArrow) {
+      if (historyCursor === null) return
+      const next = historyCursor - 1
+      if (next < 0) {
+        setHistoryCursor(null)
+        setValue('')
+      } else {
+        setHistoryCursor(next)
+        setValue(history[next] ?? '')
+      }
+    }
+  })
 
   useInput((input, key) => {
     if (!showThemeList) return
@@ -88,6 +117,7 @@ export function SearchScreen({
   })
 
   const handleSubmit = (text: string): void => {
+    setHistoryCursor(null)
     const trimmed = text.trim()
     // A handled slash command (/theme, /mode — with or without arg) resets
     // the bar so the picker or the confirmation note starts from a clean
@@ -109,13 +139,26 @@ export function SearchScreen({
       <Box marginTop={2}>
         <TextInput
           value={value}
-          onChange={setValue}
+          onChange={next => {
+            setHistoryCursor(null)
+            setValue(next)
+          }}
           onSubmit={handleSubmit}
           placeholder="what show are we watching?"
           prompt="❯ "
           inputEnabled={!showThemeList}
         />
       </Box>
+
+      {/* recall hint — only while the bar is empty, so typing is never noisy */}
+      {value.length === 0 && history.length > 0 && !showThemeList && (
+        <Box marginTop={1}>
+          <Text dimColor>
+            <Text color={THEME.violet}>↑</Text> {history[0]!.length > 56 ? history[0]!.slice(0, 55) + '…' : history[0]}
+            {history.length > 1 ? `  · ${history.length} recent` : ''}
+          </Text>
+        </Box>
+      )}
 
       <Box marginTop={2} flexDirection="row">
         <Text dimColor>type a </Text>

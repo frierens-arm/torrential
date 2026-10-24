@@ -13,6 +13,9 @@ import { setTheme, normalizeThemeName, themeList, DEFAULT_THEME_ID } from './the
 import { MODE_IDS } from './constants.js'
 import type { SearchMode } from './types.js'
 import { EngineHost } from './engine/host.js'
+import { runDoctor } from './doctor.js'
+import { enableFileLog, log, resolveLogPath } from './utils/log.js'
+import { pruneMetadataCache } from './utils/cache.js'
 
 /* ------------------------------------------------------------------ *
  * Argument parsing (hand-rolled, zero deps)
@@ -40,6 +43,12 @@ interface CliArgs {
   mode?: SearchMode
   /** --default-player / -df: '' = flag given without a value (show mode). */
   defaultPlayer?: string
+  /** --debug[=<path>]: '' = default log path, undefined = logging off. */
+  debug?: string
+  /** --doctor: print the environment report and exit. */
+  doctor: boolean
+  /** --offline: skip the network probes (doctor). */
+  offline: boolean
   help: boolean
   version: boolean
 }
@@ -74,6 +83,13 @@ const HELP = `
         --no-player         do not launch a player; show the stream URL only
         --keep-cache        keep raw cache pieces after exit (advanced)
         --clear-cache       wipe the whole cache directory, then run
+        --doctor            check Node, config, cache, players, the stream
+                            port and every indexer, then print a report
+        --offline           skip network probes (with --doctor; also for
+                            fully offline checks)
+        --debug[=<path>]    write a diagnostic log (default:
+                            <cache dir>/torrential.log). Also enabled by
+                            TORRENTIAL_DEBUG=1 or TORRENTIAL_LOG=<path>
 
   Speed (defaults are already tuned — tweak for your network):
         --turbo / --no-turbo    turbo serving: playhead-driven piece windows
@@ -120,7 +136,7 @@ const HELP = `
   /mode · /mode <auto|tv|movies>.
 
   Config: ${'~/.config/torrential/config.json'}
-  Docs:   https://github.com/example/torrential
+  Docs:   https://github.com/frierens-arm/torrential
 `.trimStart()
 
 function fail(message: string, code = 1): never {
@@ -136,6 +152,8 @@ function parseArgs(argv: string[]): CliArgs {
     listPlayers: false,
     keepCache: false,
     clearCache: false,
+    doctor: false,
+    offline: false,
     help: false,
     version: false
   }
@@ -185,6 +203,20 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (arg === '--list-players') {
       args.listPlayers = true
+      continue
+    }
+    if (arg === '--doctor') {
+      args.doctor = true
+      continue
+    }
+    if (arg === '--offline') {
+      args.offline = true
+      continue
+    }
+    if (arg === '--debug') {
+      // A value is only accepted inline (--debug=/tmp/t.log) so a query typed
+      // after --debug is never mistaken for a path.
+      args.debug = inlineValue ?? ''
       continue
     }
     if (arg === '--keep-cache') {
@@ -410,6 +442,17 @@ function main(): void {
     runListPlayers()
     return
   }
+  if (args.doctor) {
+    const loaded = loadConfig(args.config)
+    const logPath = resolveLogPath(args.debug, loaded.config.cache_directory)
+    if (logPath !== null && enableFileLog(logPath) !== null) {
+      log('doctor:start', { offline: args.offline, node: process.version, platform: process.platform })
+    }
+    void runDoctor({ config: loaded.config, loaded, skipProviders: args.offline }).then(result => {
+      process.exitCode = result.ok ? 0 : 1
+    })
+    return
+  }
   if (args.defaultPlayer !== undefined) {
     runSetDefaultPlayer(args.defaultPlayer, args.config)
     return
@@ -438,6 +481,42 @@ function main(): void {
     } catch (err) {
       process.stderr.write(`could not wipe cache: ${(err as Error).message}\n`)
     }
+  }
+
+  // ── debug log (opt-in) ──
+  // The TUI owns the terminal (alternate screen + raw mode), so a diagnostic
+  // line printed the normal way is invisible at best and corrupts the frame
+  // at worst. Everything goes to a file instead — see utils/log.ts.
+  const logPath = resolveLogPath(args.debug, merged.cache_directory)
+  if (logPath !== null) {
+    const active = enableFileLog(logPath)
+    if (active !== null) {
+      process.stderr.write(`debug log → ${active}\n`)
+      log('boot', {
+        version: VERSION,
+        node: process.version,
+        platform: process.platform,
+        arch: process.arch,
+        config: args.config ?? configPath(),
+        cache: merged.cache_directory,
+        providers: merged.providers,
+        mode: merged.mode,
+        turbo: merged.turbo,
+        port: merged.port
+      })
+      for (const warning of warnings) log('config:warning', { message: warning })
+    } else {
+      process.stderr.write(`could not write the debug log at ${logPath}\n`)
+    }
+  }
+
+  // Metadata housekeeping: drop .torrent files nobody touched in a month and
+  // cap the directory, so repeat streams stay fast without the cache growing
+  // forever. Best effort — a failure here must never block a session.
+  try {
+    pruneMetadataCache(merged.cache_directory)
+  } catch {
+    /* housekeeping only */
   }
 
   // Skin: --theme wins over config.theme; unknown config values fall back
@@ -473,6 +552,7 @@ function main(): void {
       return
     }
     sigintHit = true
+    log('sigint')
     if (appShutdown) {
       void appShutdown().finally(() => process.exit(0))
       setTimeout(() => process.exit(0), 3500).unref?.()

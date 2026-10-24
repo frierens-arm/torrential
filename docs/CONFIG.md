@@ -261,6 +261,20 @@ per mirror and suggests a VPN, `x1337_mirrors`, or `--sources tpb,nyaa`.
 Note: a Cloudflare "Just a moment…" interstitial is detected and reported as
 such — no scraper gets through it; that is what VPNs and mirrors are for.
 
+## Files next to the config
+
+`config.json` is the only file you are expected to edit. Its siblings are
+machine-managed and safe to delete:
+
+| File | What it is |
+|---|---|
+| `state.json` (same directory) | Recent searches (20) and the last episode streamed from each series (200 series max). Deleting it only forgets your place; nothing else changes. |
+| `<cache dir>/torrential.log` | Debug log. Only created with `--debug`, `TORRENTIAL_DEBUG=1` or `TORRENTIAL_LOG=<path>`. Truncated at 2 MB, never written to the TUI. |
+| `<cache dir>/meta/*.torrent` | Metadata cache for instant re-streams. Pruned at boot: entries untouched for 30 days are dropped, and the directory is capped at 300 files. |
+
+There are no config keys for the log or for continuity on purpose — both are
+opt-in, zero-config behaviors.
+
 ## Precedence
 
 ```

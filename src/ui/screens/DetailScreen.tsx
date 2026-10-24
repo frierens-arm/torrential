@@ -21,6 +21,8 @@ export interface DetailScreenProps {
   onStream: (result: SearchResult, magnet: string, target: StreamTarget) => void
   /** Supplemental smart-search indicator ("hunting S02E05…"). */
   hunting?: string | null
+  /** Continuity line ("finished E01 — next up E02 · ⏎ to play"). */
+  note?: string | null
   onBack: () => void
 }
 
@@ -37,6 +39,7 @@ export function DetailScreen({
   target,
   onStream,
   hunting,
+  note,
   onBack
 }: DetailScreenProps): React.ReactElement {
   const { width } = useTerminalSize()
@@ -218,6 +221,12 @@ export function DetailScreen({
           {status === 'ok' && <Text color={THEME.green}>✓ resolved — ready to stream</Text>}
           {status === 'error' && <Text color={THEME.red}>✗ {error}</Text>}
         </Box>
+
+        {note && (
+          <Box marginTop={1}>
+            <Text color={THEME.green}>→ {note}</Text>
+          </Box>
+        )}
 
         {hunting && (
           <Box marginTop={1}>

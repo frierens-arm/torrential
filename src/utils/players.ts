@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import { log, logError } from './log.js'
 
 /** A player we found installed on this machine. */
 export interface InstalledPlayer {
@@ -259,11 +260,18 @@ export function trySpawnPlayer(chain: PlayerLaunch[]): Promise<SpawnResult> {
     const attemptNext = (): void => {
       const launch = attempts.shift()
       if (!launch) {
+        log('player:none-launchable')
         resolve({ child: null, launch: null, error: 'no launchable player found' })
         return
       }
       let settled = false
       let child: ChildProcess
+      log('player:spawn', {
+        name: launch.name,
+        command: launch.command,
+        args: launch.args,
+        detached: launch.detached
+      })
       try {
         child = spawn(launch.command, launch.args, {
           stdio: 'ignore',
@@ -271,13 +279,14 @@ export function trySpawnPlayer(chain: PlayerLaunch[]): Promise<SpawnResult> {
           detached: false
         })
       } catch (err) {
+        logError('player:spawn-threw', err, { name: launch.name })
         attemptNext()
         return
       }
       const onError = (err: Error): void => {
         if (settled) return
         settled = true
-        void err // ENOENT etc. — try the next candidate
+        logError('player:spawn-failed', err, { name: launch.name }) // ENOENT etc. — try the next candidate
         attemptNext()
       }
       child.on('error', onError)

@@ -10,6 +10,8 @@ A torrential downpour of TV, right in your terminal.
 
 torlink-inspired TUI · programmatic WebTorrent engine · series → seasons → episodes, zero wait
 
+[![CI](https://github.com/frierens-arm/torrential/actions/workflows/ci.yml/badge.svg)](https://github.com/frierens-arm/torrential/actions/workflows/ci.yml)
+
 [Features](#features) · [Install](#install) · [Quickstart](#quickstart) · [Keybindings](#keybindings) · [Streaming](#how-streaming-works) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
 
 </div>
@@ -126,6 +128,20 @@ flow, `movies` goes straight to the list. Switch with `--mode` or `/mode`.
   animated sheen, live download/upload speed, peers, ETA, cached percentage,
   and honest warnings for quiet or dead swarms (dead-torrent errors carry a
   concrete next step, not just a shrug).
+- **`--doctor`, not guesswork** — one command checks the runtime, config,
+  cache, player binaries, stream port and every indexer, prints a plain-text
+  report and exits non-zero on a real problem. `--offline` skips the network
+  probes, so it works on a plane and in CI. This is the first thing to paste
+  into a bug report.
+- **Continuity out of the box** — recent searches are recalled with `↑`/`↓`
+  in the search bar, the last episode you streamed from a season is
+  preselected and marked `▶`, and when an episode finishes the pre-flight card
+  moves to the next one (`⏎` to keep watching).
+- **`--debug` when it matters** — the TUI owns the terminal, so diagnostics go
+  to `<cache dir>/torrential.log` instead of stdout. Search timings, metadata
+  cache hits, turbo bind results, the chosen file, the player argv and every
+  teardown land there, and the cache's `meta/` folder is pruned at boot so it
+  cannot grow forever.
 - **Disk stays clean by default; `--keep` when it's a keeper** — closing the
   player (or `q` / `Ctrl+C`) stops the engine and wipes the temporary piece
   cache, so watched episodes never eat your disk. Add `-k`/`--keep` and the
@@ -270,6 +286,8 @@ torrential --mode movies "sintel"       # movie hunt (tv / movies / auto)
 torrential --no-player --magnet '…'   # headless-ish: show the stream URL only
 torrential --list-players             # what can I launch on this machine?
 torrential --clear-cache              # wipe ~/.cache/torrential and run
+torrential --doctor                    # check Node, player, port, sources
+TORRENTIAL_DEBUG=1 torrential "severance"   # write <cache>/torrential.log
 
 # speed tuning (defaults are already on)
 torrential --no-turbo "the bear"        # plain webtorrent server instead of turbo
@@ -297,10 +315,34 @@ streaming.
 | `⏎` | open the highlighted row: series → seasons, season → episodes, episode/movie → pre-flight, confirm → stream (also applies a skin in the picker) |
 | `n` / `p` | cycle next / previous torrent for the highlighted episode or movie (pre-flight) |
 | `g` / `G` | jump to top / bottom |
+| `↑` / `↓` (search bar) | recall recent searches, shell-style (newest first) |
 | `PgUp` / `PgDn` | page through long episode lists or movie lists |
 | `b` | back one tier (movie detail → movie list; episode → season → series → search); from stream: stop |
 | `esc` / `q` | close the `/theme` picker · back / new search (including from the movie list) · stop streaming (stream) — wipes the cache unless `--keep` |
 | `Ctrl+C` | quit anywhere — kills the player, stops the engine, wipes the cache unless `--keep` |
+
+## What's new in 2.2
+
+- **`--doctor`** — runtime, config warnings, cache writability, disk space,
+  player detection, port availability and a live probe of every indexer in
+  one report; non-zero exit on a hard failure. `--offline` skips the probes.
+- **`--debug`** — opt-in diagnostic log (`--debug=/path`, or
+  `TORRENTIAL_DEBUG=1` / `TORRENTIAL_LOG=<path>`). Logging never writes to the
+  TUI frame; the file is truncated at 2 MB. Search timings, metadata hits,
+  turbo bind results, the selected file, player argv and teardown are covered.
+- **Continuity** — `state.json` remembers recent searches and where you were
+  in each series. `↑`/`↓` recalls searches, the last-watched episode is
+  preselected with a `▶` marker, and finishing an episode moves the pre-flight
+  card to the next one instead of dumping you back on the grid.
+- **Bounded metadata cache** — `<cache>/meta` is pruned at boot (30 days,
+  300 entries max), so repeat streams stay instant without unbounded growth.
+- **Smarter playhead** — only connections that actually served bytes in the
+  last 10 s set the piece window. A paused second player (or VLC's EOF index
+  probe) can no longer starve the reader that is watching.
+- **Tests + CI** — `npm test` runs the `node:test` suite (parser, classifier,
+  Range/playhead, config, state, cache, doctor) and CI exercises
+  Linux/macOS/Windows × Node 22/24. `App.tsx` was split into
+  `src/ui/hooks/*` (search, stream session, preferences) on the way.
 
 ## What's new in 2.1
 
@@ -461,6 +503,8 @@ for how the pieces fit together (providers → engine → player → TUI).
 | `no metadata after 45s — swarm looks dead` | Nobody is seeding. Pick a result with more seeders (the SEED column is color-coded; red = dead). |
 | A movie-heavy search still opened the series view | The auto router saw more episode-ish rows than movie rows. Re-run with `--mode movies` (or `/mode movies`, then search again) for the flat list. |
 | A movie never appears in the series list | Expected in `tv` mode — the strict filter drops non-episodic rows. Use `auto` or `movies` for those releases. |
+| `--doctor` reports a failing indexer | That source is blocked or broken on your network right now. Results from the others are unaffected; use `--sources` to drop it, or a VPN/mirror for 1337x. |
+| Something is broken and the TUI shows nothing useful | Run `torrential --doctor` for a printable report, then reproduce with `--debug` and include `<cache dir>/torrential.log`. |
 | `no player found — open the endpoint above` | Install mpv/VLC, or set `default_player`/`--player` to a binary you have. `--list-players` shows what was detected. |
 | `system default` opened my browser | That's the OS URL handler doing its job. For a real video player set `"default_player": "mpv"` (or `"iina"` on a Mac). |
 | Playback stalls at 0% | Rare swarm hiccup: press `q` and try again, or pick a better-seeded release. Check `⚠ warnings` and the `buffer ≈ Ns ahead` estimate on the stream screen. |
@@ -492,11 +536,19 @@ scorer, players, http, format, keep, sources, ascii), `src/ui` (Ink screens
 The offline checks:
 
 ```bash
+npm test                             # node:test suite (test/*.test.ts, via tsx)
 npm run smoke                        # turbo server HTTP compatibility matrix
 node tools/classify-smoke.mjs        # classifier + year-guard regressions (after build)
 node tools/tv-smoke.mjs              # episodic parser/index (after build)
 npx tsx tools/render-smoke.tsx       # movie-path Ink renders
+npx tsx tools/app-smoke.tsx          # mounts the real App: history + state.json
+node dist/cli.js --doctor --offline  # environment report, no network probes
 ```
+
+CI runs the whole set on Linux, macOS and Windows against Node 22 and 24
+(`.github/workflows/ci.yml`). Pushing a `v*` tag publishes to npm with
+provenance and attaches the packed tarball to the GitHub release
+(`.github/workflows/release.yml`; set an `NPM_TOKEN` secret first).
 
 ### Dependency & security notes
 

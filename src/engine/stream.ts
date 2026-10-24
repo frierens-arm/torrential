@@ -9,6 +9,8 @@ import { TRACKERS, VIDEO_EXTENSIONS } from '../constants.js'
 import { describeTorrentId, infoHashFromId } from '../utils/magnet.js'
 import { moveFileToKeepDir } from '../utils/keep.js'
 import { parseTvTitle, scopeLabel } from '../utils/tv.js'
+import { metaCachePath } from '../utils/cache.js'
+import { log, logError } from '../utils/log.js'
 import { EngineHost } from './host.js'
 import { TurboServer, type TurboFile, type TurboSnapshot, type TurboTorrent } from './turbo-server.js'
 
@@ -277,6 +279,8 @@ export class StreamEngine {
   private stallWarned = false
   private bufferAheadSecs: number | null = null
   private metaCacheHit = false
+  /** Wall clock when start() was called — timing for the debug log. */
+  private startedAt = 0
 
   constructor(opts: EngineOptions) {
     this.opts = opts
@@ -328,6 +332,7 @@ export class StreamEngine {
   }
 
   private fail(message: string, hint?: string): void {
+    log('stream:failed', { message, hint })
     this.errorMessage = message
     this.errorHint = hint
     this.phase = 'error'
@@ -341,7 +346,7 @@ export class StreamEngine {
    * ---------------------------------------------------------------- */
 
   private metaCachePath(infoHash: string): string {
-    return path.join(this.opts.cacheDir, 'meta', `${infoHash}.torrent`)
+    return metaCachePath(this.opts.cacheDir, infoHash)
   }
 
   private async loadCachedTorrentData(torrentId: string): Promise<{ data: Uint8Array; isPrivate: boolean } | null> {
@@ -427,6 +432,8 @@ export class StreamEngine {
    * (dead swarm, invalid id, port trouble).
    */
   async start(torrentId: string, target: StreamTarget = { kind: 'auto' }): Promise<void> {
+    this.startedAt = Date.now()
+    log('stream:start', { torrent: describeTorrentId(torrentId), target: target.kind, turbo: this.opts.turbo })
     this.opts.torrentId = torrentId
     this.streamTarget = target
     this.stopping = false
@@ -454,10 +461,12 @@ export class StreamEngine {
         const port = await turbo.listen(this.opts.port)
         this.turboServer = turbo
         this.port = port
-      } catch {
+        log('stream:turbo-listen', { port })
+      } catch (err) {
         // Turbo is a speedup, not a requirement — fall back to the
         // battle-tested webtorrent server below.
         this.turboServer = null
+        logError('stream:turbo-bind-failed', err, { preferredPort: this.opts.port })
       }
     }
 
@@ -516,6 +525,12 @@ export class StreamEngine {
 
     this.phase = 'metadata'
     this.emitStats()
+    log('stream:metadata', {
+      torrent: torrent.infoHash,
+      cacheHit: this.metaCacheHit,
+      files: torrent.files.length,
+      tookMs: Date.now() - this.startedAt
+    })
     this.saveMetadataCache(torrent)
 
     // ── TV file resolution: which file inside the torrent do we serve? ──
@@ -651,6 +666,17 @@ export class StreamEngine {
 
     if (this.metaCacheHit) this.addWarning('metadata cache hit — torrent known from a previous session')
 
+    log('stream:ready', {
+      torrent: torrent.infoHash,
+      file: file.name,
+      bytes: file.length,
+      fileIndex: this.fileIndex,
+      port: this.port,
+      url: this.url,
+      turbo: this.turboServer !== null,
+      tookMs: Date.now() - this.startedAt
+    })
+
     this.phase = 'streaming'
     this.emitStats()
     this.emitEvent('ready', {
@@ -753,6 +779,7 @@ export class StreamEngine {
     this.phase = 'stopped'
     this.bufferAheadSecs = null
     this.emitStats()
+    log('stream:stopped', { torrent: torrentName, kept: kept?.destPath ?? null, progress: kept?.progress ?? null })
     this.emitEvent('stopped', kept)
     return kept
   }

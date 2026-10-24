@@ -16,6 +16,8 @@ export interface EpisodeScreenProps {
   packs: SearchResult[]
   /** Supplemental smart-search indicator ("hunting S02E05…"). */
   hunting?: string | null
+  /** Episode last streamed from this season — marked with ▶ and preselected. */
+  resumeEpisode?: number | null
   selected: number
   onSelected: (index: number) => void
   /** ⏎ on an episode row (index into rows). */
@@ -43,6 +45,7 @@ export function EpisodeScreen({
   rows,
   packs,
   hunting,
+  resumeEpisode,
   selected,
   onSelected,
   onPickEpisode,
@@ -130,6 +133,7 @@ export function EpisodeScreen({
           </Text>
           <Text dimColor>
             {`  ·  ${rows.length} episodes${packs.length > 0 ? ` · ${packs.length} packs` : ''}`}
+            {resumeEpisode !== null && resumeEpisode !== undefined ? ' · ▶ last watched' : ''}
           </Text>
         </Text>
       </Box>
@@ -161,7 +165,7 @@ export function EpisodeScreen({
                   {marker}
                 </Text>
                 <Text backgroundColor={rowBg} color={isSelected ? '#ffffff' : THEME.cyan} bold={isSelected}>
-                  {padEnd(`E${pad2(e.episode)}`, 8)}
+                  {padEnd(`${e.episode === resumeEpisode ? '▶' : ' '}E${pad2(e.episode)}`, 8)}
                 </Text>
                 <Text backgroundColor={rowBg} color={isSelected ? '#ffffff' : undefined}>
                   {padEnd(

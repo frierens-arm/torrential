@@ -174,6 +174,60 @@ interface WindowSelection {
   to: number
 }
 
+/** What one served connection says about playback progress. */
+export interface PlayheadSample {
+  position: number
+  lastActivity: number
+  open: boolean
+}
+
+/** A connection that moved bytes this recently counts as actively reading. */
+export const PLAYHEAD_HOT_MS = 10_000
+/** Longer than this without a byte and the connection is ignored entirely. */
+export const PLAYHEAD_IDLE_MS = 45_000
+
+export interface PlayheadOptions {
+  hotMs?: number
+  idleMs?: number
+}
+
+/**
+ * Pick the read position the piece window should follow.
+ *
+ * Two activity tiers, because both failure modes are real:
+ *
+ *  - a PAUSED player keeps its connection open but stops reading. Counting
+ *    it for the full idle window drags the window backwards (and starves the
+ *    player that is actually watching) — so only "hot" connections, which
+ *    served bytes within `hotMs`, get to set the playhead.
+ *  - if nothing is hot (the player is buffering, or the app just re-attached),
+ *    fall back to the least-recently-idle reader rather than snapping to 0.
+ *
+ * The minimum across the chosen tier keeps VLC-style EOF/index probes from
+ * parking the window at the end of the file. Returns null when no connection
+ * qualifies, so callers can hold the previous playhead steady.
+ */
+export function selectPlayhead(
+  samples: Iterable<PlayheadSample>,
+  now: number,
+  opts: PlayheadOptions = {}
+): number | null {
+  const hotMs = opts.hotMs ?? PLAYHEAD_HOT_MS
+  const idleMs = opts.idleMs ?? PLAYHEAD_IDLE_MS
+  let hot = Infinity
+  let recent = Infinity
+  for (const sample of samples) {
+    if (!sample.open) continue
+    const age = now - sample.lastActivity
+    if (age > idleMs) continue
+    if (sample.position < recent) recent = sample.position
+    if (age <= hotMs && sample.position < hot) hot = sample.position
+  }
+  if (hot !== Infinity) return hot
+  if (recent !== Infinity) return recent
+  return null
+}
+
 const CLAMP = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
 
 export class TurboServer {
@@ -629,23 +683,17 @@ export class TurboServer {
    * -------------------------------------------------------------- */
 
   /**
-   * The playhead is the minimum read position across connections that
-   * recently served bytes. A secondary "index probe" connection sitting at
-   * EOF (VLC/MKV-style) therefore never drags the window to the end of the
-   * file, while a real seek (old connection closed, new one opened) takes
-   * over immediately.
+   * The playhead comes from selectPlayhead(): the minimum read position
+   * across connections that are still consuming bytes. A secondary "index
+   * probe" connection sitting at EOF (VLC/MKV-style) therefore never drags
+   * the window to the end of the file, while a real seek (old connection
+   * closed, new one opened) takes over immediately.
    */
   private computePlayhead(): number {
-    const now = Date.now()
-    let min = Infinity
-    for (const conn of this.connections.values()) {
-      if (!conn.open) continue
-      if (now - conn.lastActivity > 45_000) continue
-      if (conn.position < min) min = conn.position
-    }
-    if (min === Infinity) return this.lastPlayhead
-    this.lastPlayhead = min
-    return min
+    const playhead = selectPlayhead(this.connections.values(), Date.now())
+    if (playhead === null) return this.lastPlayhead
+    this.lastPlayhead = playhead
+    return playhead
   }
 
   private tick(): void {
