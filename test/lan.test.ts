@@ -5,6 +5,7 @@ import {
   isLoopbackAddress,
   normaliseRemoteAddress,
   pickLanAddress,
+  rankLanAddresses,
   type NetworkInterfaceMap
 } from '../src/utils/lan.js'
 
@@ -60,6 +61,18 @@ describe('pickLanAddress', () => {
   it('returns null on a loopback-only machine', () => {
     assert.equal(pickLanAddress({ lo: [{ address: '127.0.0.1', family: 'IPv4', internal: true }] }), null)
     assert.equal(pickLanAddress({}), null)
+  })
+
+  it('ranks every candidate so the TUI/doctor can offer alternates', () => {
+    const ranked = rankLanAddresses({
+      docker0: [{ address: '172.17.0.1', family: 'IPv4', internal: false }],
+      en0: [{ address: '10.0.0.228', family: 'IPv4', internal: false }],
+      en1: [{ address: '192.168.1.9', family: 'IPv4', internal: false }]
+    })
+    assert.deepEqual(
+      ranked.map(c => c.address),
+      ['192.168.1.9', '10.0.0.228', '172.17.0.1']
+    )
   })
 })
 

@@ -65,7 +65,7 @@ function isIPv6(info: LanInterfaceInfo): boolean {
  * IPv6 is skipped entirely: a bracketed v6 URL is far too long to scan from
  * a terminal at a comfortable size.
  */
-export function pickLanAddress(ifaces: NetworkInterfaceMap): LanAddress | null {
+export function rankLanAddresses(ifaces: NetworkInterfaceMap): LanAddress[] {
   const scored: Array<{ address: string; name: string; score: number }> = []
 
   for (const [name, infos] of Object.entries(ifaces)) {
@@ -83,9 +83,13 @@ export function pickLanAddress(ifaces: NetworkInterfaceMap): LanAddress | null {
     }
   }
 
-  if (scored.length === 0) return null
   scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name) || a.address.localeCompare(b.address))
-  return { address: scored[0].address, name: scored[0].name }
+  return scored.map(({ address, name }) => ({ address, name }))
+}
+
+/** Best LAN IPv4, or null when the machine has none. */
+export function pickLanAddress(ifaces: NetworkInterfaceMap): LanAddress | null {
+  return rankLanAddresses(ifaces)[0] ?? null
 }
 
 /** Detect the machine's LAN IPv4, or null on a loopback-only machine. */

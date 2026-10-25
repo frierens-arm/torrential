@@ -198,6 +198,8 @@ export interface StreamStats {
   turbo: boolean
   /** Estimated seconds of video ready in cache ahead of the playhead. */
   bufferAheadSecs: number | null
+  /** Active HTTP readers from other devices — >0 means the phone is playing. */
+  phones: number
   /**
    * Multi-file torrent waiting on the interactive file picker: `files`
    * carries the candidate list; the UI calls engine.selectFile(index).

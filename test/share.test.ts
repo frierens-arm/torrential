@@ -132,6 +132,12 @@ describe('TurboServer phone share', () => {
     assert.equal(res.body, '0123')
   })
 
+  it('does not count a loopback reader as a phone', () => {
+    // Connection records are created per served request; the ones above came
+    // from 127.0.0.1, so the "phone connected" counter must stay at zero.
+    assert.equal(server.getSnapshot().remoteConnections, 0)
+  })
+
   it('answers HEAD without a body', async () => {
     const res = await request(port, `/p/${TOKEN}`, { method: 'HEAD' })
     assert.equal(res.status, 200)

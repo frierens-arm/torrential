@@ -31,7 +31,15 @@ describe('runDoctor', () => {
     })
     const report = lines.join('\n')
     assert.match(report, /torrential \d/)
-    for (const section of ['runtime', 'paths', 'player', 'stream server', 'indexers', 'next steps']) {
+    for (const section of [
+      'runtime',
+      'paths',
+      'player',
+      'stream server',
+      'phone sharing',
+      'indexers',
+      'next steps'
+    ]) {
       assert.ok(report.includes(section), `missing section: ${section}`)
     }
     assert.ok(report.includes('skipped (--doctor --offline)'))

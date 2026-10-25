@@ -68,6 +68,8 @@ export interface TurboSnapshot {
   bufferAheadSecs: number | null
   /** Active (recently reading) player connections. */
   connections: number
+  /** Active connections from other devices — a phone that has connected. */
+  remoteConnections: number
 }
 
 /* ------------------------------------------------------------------ *
@@ -174,6 +176,8 @@ interface ServedConnection {
   position: number
   lastActivity: number
   open: boolean
+  /** True when the peer is another device (the phone), not this machine. */
+  remote: boolean
 }
 
 interface WindowSelection {
@@ -750,7 +754,13 @@ export class TurboServer {
     }
 
     // ---- playhead bookkeeping (one record per served connection) ----
-    const conn: ServedConnection = { id: ++this.connSeq, position: start, lastActivity: Date.now(), open: true }
+    const conn: ServedConnection = {
+      id: ++this.connSeq,
+      position: start,
+      lastActivity: Date.now(),
+      open: true,
+      remote: !isLoopbackAddress(req.socket.remoteAddress)
+    }
     this.connections.set(conn.id, conn)
     let aborted = false
     const abort = (): void => {
@@ -958,7 +968,8 @@ export class TurboServer {
           : 0,
       bufferAheadBytes: this.bufferAheadBytes,
       bufferAheadSecs: this.bufferAheadSecs,
-      connections: [...this.connections.values()].filter(c => c.open).length
+      connections: [...this.connections.values()].filter(c => c.open).length,
+      remoteConnections: [...this.connections.values()].filter(c => c.open && c.remote).length
     }
   }
 }

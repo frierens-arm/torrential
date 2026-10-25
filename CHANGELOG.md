@@ -22,9 +22,18 @@ public surface; anything marked *internal* can change without notice.
 - **`--lan-ip <addr>`** pins the address advertised on the QR for multi-NIC or
   VPN machines; detection otherwise prefers 192.168 → 172.16 → 10 and ranks
   virtual adapters last.
-- Tests for LAN address selection, loopback classification, share-token gating,
-  the phone page, Range responses on the share route and QR rendering.
-  `tools/render-smoke.tsx` now asserts the QR draws inside Ink.
+- **Live connection feedback.** Remote HTTP readers are counted separately from
+  the local machine, so the stream screen shows `○ waiting for your phone…`
+  until the phone actually starts reading, then
+  `● phone connected — playback moved to your phone`. A share that never arrives
+  is now visibly a network/permission problem instead of a silent failure.
+- **`--doctor` phone-sharing section** — ranked LAN addresses (plus alternates
+  to pin with `--lan-ip`), a LAN bind test, the macOS firewall state and the
+  Local Network permission reminder.
+- Tests for LAN address selection/ranking, loopback classification, share-token
+  gating, the phone page, Range responses on the share route, remote
+  connection counting and QR rendering. `tools/render-smoke.tsx` now asserts
+  the QR, the waiting state and the connected state render inside Ink.
 
 ### Changed
 - **Finishing an episode returns to the episode grid**, cursor on the next

@@ -165,6 +165,19 @@ export function StreamScreen({
           <Text dimColor color={THEME.subtle}>
             same Wi-Fi · opens as a web player, nothing is saved on the phone
           </Text>
+          {(stats?.phones ?? 0) > 0 ? (
+            <Text color={THEME.lime}>● phone connected — playback moved to your phone</Text>
+          ) : (
+            <>
+              <Text color={THEME.yellow}>○ waiting for your phone to load the page…</Text>
+              <Text dimColor color={THEME.subtle}>
+                page won't load? macOS: allow your terminal in Privacy and Security → Local Network
+              </Text>
+              <Text dimColor color={THEME.subtle}>
+                also check the router's client/AP isolation — guest Wi-Fi cannot reach this computer
+              </Text>
+            </>
+          )}
         </Box>
       )}
       {phone.error && !phone.active && (

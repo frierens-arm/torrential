@@ -130,6 +130,7 @@ const stats: StreamStats = {
   warnings: [],
   turbo: true,
   bufferAheadSecs: 24,
+  phones: 0,
   awaitingFile: false,
   backend: 'torrent'
 }
@@ -151,7 +152,24 @@ check('prints the share URL for manual entry', sharingOut.includes(SHARE_URL), s
 check('states that the phone stores nothing', sharingOut.includes('nothing is saved on the phone'))
 check('advertises the l shortcut', sharingOut.includes('stop sharing'))
 check('keeps the desktop endpoint visible', sharingOut.includes('127.0.0.1:8000'))
+check('says it is waiting for the phone', sharingOut.includes('waiting for your phone'))
+check('points at the macOS local-network permission', sharingOut.includes('Local Network'))
 sharing.unmount()
+
+const connected = render(
+  <StreamScreen
+    stats={{ ...stats, phones: 1 }}
+    player={null}
+    phone={{ active: true, url: SHARE_URL, error: null }}
+    onTogglePhone={() => {}}
+    keepCache={false}
+    onStop={() => {}}
+  />
+)
+const connectedOut = connected.lastFrame() ?? ''
+check('confirms the phone is connected', connectedOut.includes('phone connected'), connectedOut)
+check('drops the waiting hints once connected', !connectedOut.includes('waiting for your phone'))
+connected.unmount()
 
 const shareFailed = render(
   <StreamScreen

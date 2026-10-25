@@ -148,22 +148,13 @@ seeding while the phone plays.
 
 ```
   ⌁ watch on your phone
-  ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
-  █ ▄▄▄▄▄ █▄▄▄ ▀   █▄▀▀ █ ▄▄▄▄▄ █
-  █ █   █ ██▄▀ █▄ ▀▀▀ ▄██ █   █ █
-  █ █▄▄▄█ ██▀▄ ▄ ▀▄▀ ▀▄▄█ █▄▄▄█ █
-  █▄▄▄▄▄▄▄█ ▀▄█ █ █ █ ▀ █▄▄▄▄▄▄▄█
-  █▄▄█ ▄█▄██▄▀█▄▄  ▀  ▀ ▀▄█▀█▀▀▄█
-  ██▀█▄█▄▄▀█▄██▄█   ▀█▀▄██▀ █▄█▀█
-  █▄█▀▄  ▄ ▀▄ █▀▄▄ ████▀  █▀▀█▀ █
-  ██▄ █ █▄ ▀▀▀█▀▀ ▄▄█  ▀▄▀▀█▄ █ █
-  █  ▀▀▀ ▄█ ▀█ ▄██ ██ ▀█▄█ ▀▀▀▀██
-  █  █ ▄▀▄▄█ ▄▀▄ ▄ ███ ▄█▀▄▀▀▀█▄█
-  █▄▄▄██▄▄▄▀ █▄▀ █ ▄▄▀  ▄▄▄  ▄▄██
-  █ ▄▄▄▄▄ ██ ▀ ▀ █ ▀ ▄▄ █▄█ ▄█▀██
-  █ █   █ █  ▄▄▄ ▀ ██▀ ▄▄▄ ▄▀▀▄ █
-  █ █▄▄▄█ █▀█▀ ▄▄█▄▀▄ █▄█▀▀ █▀▄ █
-  █▄▄▄▄▄▄▄█▄▄████▄▄▄█▄█▄██▄█▄████
+  ┌───────────────────────────────┐
+  │  ░░▒▒▓▓██▓▓▒▒░░  ██▓▓▒▒░░░   │
+  │  ██▒▒░░▓▓██▒▒░░  ▒▒██▓▓░░░   │
+  │  ▒▒░░██▓▓▒▒██░░  ▓▓▒▒██░░░   │
+  │      (illustration only)      │
+  └───────────────────────────────┘
+  ○ waiting for your phone to load the page…
   http://192.168.1.42:8000/p/abcd2345
   same Wi-Fi · opens as a web player, nothing is saved on the phone
 ```
@@ -185,6 +176,11 @@ seeding while the phone plays.
 - **Terminal width.** The QR needs roughly 40 columns; narrower terminals print
   the URL instead. The playhead follows whichever device is reading, so turbo
   buffering keeps working for the phone with no extra setup.
+- **It tells you when the phone arrives.** The screen shows
+  `○ waiting for your phone…` until the first media request, then
+  `● phone connected — playback moved to your phone`. If it never flips, the
+  phone never reached the computer: check the macOS Local Network permission,
+  the firewall, and router client/AP isolation (see Troubleshooting).
 
 ## Keybindings
 
@@ -261,7 +257,7 @@ Common cases:
 | `could not start the local stream server` | Port in use — set `port` (torrential also probes nearby ports). |
 | `no player found` | Install mpv/VLC or set `default_player` / `--player`. |
 | A movie search opened the series view | Re-run with `--mode movies`. |
-| Phone cannot load the QR URL | Usually Wi-Fi client/AP isolation or a guest SSID separating the two devices. Join the same normal network and disable "AP isolation" / "client isolation" on the router. |
+| Phone cannot load the QR URL | Run `--doctor` first. On macOS, allow your terminal in Privacy and Security → Local Network — without it the OS drops incoming LAN connections silently. Also disable router client/AP isolation and avoid guest SSIDs. |
 | `phone share: no LAN IPv4 address found` | No routable LAN address was detected (VPN-only or unusual adapter). Pass `--lan-ip <your-computer-ip>`; the stream URL is printed under the QR as a fallback. |
 | Phone page says the browser cannot decode the file | MKV/HEVC/AC3 are beyond mobile browsers. Tap **Open in VLC** (install it first) or copy the link into Infuse/nPlayer. |
 | Firewall prompt on the first share | Allow incoming connections for Node/your terminal on **private** networks — macOS and Windows ask once. |

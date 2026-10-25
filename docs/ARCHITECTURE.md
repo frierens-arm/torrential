@@ -65,7 +65,7 @@ the **Ink TUI** binds it all into one interactive surface.
 | Path | Responsibility |
 |---|---|
 | `src/cli.tsx` | Arg parsing (`--magnet`, `--player`, `--port`, `--sources`, `--mode`, `-k/--keep[=<dir>]`, `--keep-dir`, `--no-player`, `--phone`, `--lan-ip`, `--list-players`, `--doctor`, `--offline`, `--debug[=<path>]`, `--config`, `--keep-cache`, `--clear-cache`, `--turbo/--no-turbo`, `--max-conns`, `--upload-limit`, `--ram-cache`, `--help`, `--version`), config load + CLI overrides, debug-log activation, metadata-cache pruning at boot, `EngineHost` construction (client pre-warm at boot), `--list-players` / `--doctor` utilities, SIGINT → shutdown bridge, EPIPE safety. |
-| `src/doctor.ts` | `--doctor`: one plain-text pass over runtime, paths, cache writability, disk space, player detection, port availability and a live probe of each indexer. Network probes are skipped with `--offline`; the report is safe to paste into a bug report and the command exits non-zero when a hard failure is found. |
+| `src/doctor.ts` | `--doctor`: one plain-text pass over runtime, paths, cache writability, disk space, player detection, port availability, phone-sharing readiness (ranked LAN addresses, alternates, LAN bind test, firewall state) and a live probe of each indexer. Network probes are skipped with `--offline`; the report is safe to paste into a bug report and the command exits non-zero when a hard failure is found. |
 | `src/config.ts` | XDG/Windows paths, JSON load/validate/save with friendly warnings; defaults are materialized on first run. v1.2 speed keys: `turbo`, `max_conns`, `ram_cache_mb`, `upload_limit_kbps`, `head_start_mb`, `tail_prefetch_mb`, `window_secs`. `mode` (`auto` \| `tv` \| `movies`, default `auto`) is validated like `theme` — unknown values warn and fall back to `auto`. Legacy configs load unchanged (missing keys take defaults). |
 | `src/providers/*` | One module per indexer + `index.ts` aggregator. `runSearch()` accepts one query or a list (SxxExx / 1xx variants), fans every provider across all of them, dedupes cross-query, and shapes each row through `toTvResult()`: episodic rows get show/scope tags, non-episodic rows survive as GENERIC rows (`scope === undefined`) — tagged, not dropped, so the auto/movies modes can use them. `opts.mode` flows to providers: 1337x scrapes its TV category (`/category-search/<q>/TV/1/`) in tv mode and the plain catalogue search (`/search/<q>/1/`) in movies/auto (and as the mirror-compat fallback in tv mode). `ProviderInfo.kind` ('torrent' \| 'api') is the slot a future API-based backend plugs into. |
 | `src/engine/host.ts` | `EngineHost` — owns the session-wide WebTorrent client; constructed at boot so DHT bootstrap + first tracker announces happen before the user picks a result. Reused across streams; destroyed on app exit. |
@@ -186,7 +186,10 @@ turbo server and just changes who may talk to it and where the bytes go:
    `/p/<token>/media.<ext>`. That route calls the same `serveMedia()` as every
    other consumer, so Range/206/416, HEAD, MIME and playhead tracking are
    unchanged — the phone's reads simply become the playhead, and the rolling
-   piece window follows them.
+   piece window follows them. Each connection record also carries a `remote`
+   flag (loopback vs not), which surfaces as `remoteConnections` in the turbo
+   snapshot and `phones` in `StreamStats`; that is what flips the TUI from
+   "waiting for your phone" to "phone connected".
 4. The gate runs before routing: with no token, non-loopback peers get 404 on
    every route; with a token, only the page and its media route are visible.
    `l` again clears the token, and teardown drops it with the server.

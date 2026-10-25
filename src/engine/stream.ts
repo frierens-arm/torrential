@@ -281,6 +281,7 @@ export class StreamEngine {
   private deadWarned = false
   private stallWarned = false
   private bufferAheadSecs: number | null = null
+  private phones = 0
   private metaCacheHit = false
   /** Wall clock when start() was called — timing for the debug log. */
   private startedAt = 0
@@ -354,6 +355,7 @@ export class StreamEngine {
       warnings: this.warnings,
       turbo: this.turboServer !== null,
       bufferAheadSecs: this.bufferAheadSecs,
+      phones: this.phones,
       awaitingFile: this.awaitingFile,
       files: this.awaitingFile ? (this.fileInfos ?? undefined) : undefined,
       backend: 'torrent',
@@ -474,6 +476,7 @@ export class StreamEngine {
     this.stopping = false
     this.awaitingFile = false
     this.fileInfos = null
+    this.phones = 0
     this.phase = 'connecting'
     this.metaCacheHit = false
     this.emitStats()
@@ -754,6 +757,7 @@ export class StreamEngine {
         snap = null
       }
       if (snap) {
+        this.phones = snap.remoteConnections
         this.bufferAheadSecs = snap.bufferAheadSecs
         if (snap.bufferAheadSecs !== null && snap.bufferAheadSecs < 10 && this.phase === 'streaming') {
           if (!this.stallWarned) {
@@ -765,6 +769,7 @@ export class StreamEngine {
         }
       } else {
         this.bufferAheadSecs = null
+        this.phones = 0
       }
 
       this.emitStats()

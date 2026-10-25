@@ -10,6 +10,7 @@
  * than a single tiny probe query per source.
  */
 
+import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
@@ -27,6 +28,7 @@ import { cachedInstalledPlayers, systemOpener } from './utils/players.js'
 import { metaCacheDir } from './utils/cache.js'
 import { formatBytes } from './utils/format.js'
 import { logFile } from './utils/log.js'
+import { rankLanAddresses, type NetworkInterfaceMap } from './utils/lan.js'
 
 export interface DoctorOptions {
   config: TorrentialConfig
@@ -159,6 +161,31 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorResult> {
   if (config.turbo) ok('turbo serving layer enabled')
   else out('    turbo disabled (--no-turbo) — using the plain webtorrent server')
 
+  /* ── phone sharing ───────────────────────────────────────────── */
+  // Informational on purpose: watching on a phone is optional, so nothing
+  // here may turn a healthy machine into a "usable, with warnings" report.
+  section('phone sharing')
+  const ranked = rankLanAddresses(os.networkInterfaces() as unknown as NetworkInterfaceMap)
+  if (ranked.length === 0) {
+    out('    no LAN IPv4 address — share with --lan-ip <your-computer-ip>')
+    out('    (VPN-only, loopback-only and NAT-only VM networks cannot be shared)')
+  } else {
+    ok('LAN address', `${ranked[0].address}  [${ranked[0].name}]`)
+    for (const alt of ranked.slice(1, 4)) {
+      out(`    also      ${alt.address}  [${alt.name}]  — pin it with --lan-ip`)
+    }
+    if (await probePort(port, '0.0.0.0')) ok(`port ${port} accepts LAN binds`)
+    else out(`    port ${port} is busy for a LAN bind — the share picks a nearby free port`)
+    const firewall = await macFirewallState()
+    if (firewall) out(`    firewall  ${firewall}`)
+    if (process.platform === 'darwin') {
+      out('    permission macOS: allow your terminal in Privacy and Security → Local Network')
+    } else if (process.platform === 'win32') {
+      out('    permission Windows: allow Node/your terminal on PRIVATE networks when prompted')
+    }
+    out('    router    client/AP isolation and guest SSIDs block phone → computer traffic')
+  }
+
   /* ── indexers ────────────────────────────────────────────────── */
   section('indexers')
   const enabled = config.providers
@@ -225,6 +252,32 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorResult> {
   out('')
 
   return { ok: failures.length === 0, failures, warnings }
+}
+
+/** macOS Application Firewall state, or null when it cannot be read. */
+function macFirewallState(): Promise<string | null> {
+  if (process.platform !== 'darwin') return Promise.resolve(null)
+  return new Promise(resolve => {
+    try {
+      execFile(
+        '/usr/libexec/ApplicationFirewall/socketfilterfw',
+        ['--getglobalstate'],
+        { timeout: 1500 },
+        (err, stdout) => {
+          if (err) {
+            resolve(null)
+            return
+          }
+          const text = String(stdout)
+          if (/disabled/i.test(text)) resolve('disabled')
+          else if (/enabled/i.test(text)) resolve('enabled — allow incoming connections for your terminal')
+          else resolve(null)
+        }
+      )
+    } catch {
+      resolve(null)
+    }
+  })
 }
 
 /** Can we bind this port on this host? A success closes it immediately. */

@@ -68,7 +68,7 @@ missing: `chmod +x dist/cli.js`, or prefix it with `node`.
 
 | Symptom | What it means / what to do |
 |---|---|
-| The phone loads nothing (timeout) | Usually Wi-Fi **client/AP isolation** or a guest SSID. Join the same normal network, disable "AP isolation"/"client isolation" on the router, and check that the phone is not on cellular only. |
+| The phone loads nothing (timeout) | The stream screen stays on `○ waiting for your phone` — the connection never arrived. On macOS, allow your terminal in **System Settings → Privacy and Security → Local Network** (incoming LAN connections are dropped silently until then). Then check Windows firewall/private network, then Wi-Fi **client/AP isolation** and guest SSIDs. `torrential --doctor` reports the advertised address, alternates, a LAN bind test and the firewall state. |
 | `phone share: this stream server is loopback-only — restart with --phone` | The socket fell back to `127.0.0.1` (typically an IPv6-less setup), so the LAN cannot dial it. Relaunch with `--phone`, which binds `0.0.0.0`, and press `l`. |
 | `phone share: no LAN IPv4 address found` | Detection skipped every interface (VPN-only, link-local, virtual). Pass `--lan-ip <your-computer-ip>` — the URL under the QR can always be typed manually too. |
 | The QR shows the wrong address | A VPN or second adapter won the ranking. `torrential --phone --lan-ip 192.168.1.42`. |
@@ -76,6 +76,7 @@ missing: `chmod +x dist/cli.js`, or prefix it with `node`.
 | Playback starts, then buffers forever | The phone took over as the reader, so the swarm is now the bottleneck. Watch `buffer ≈ Ns ahead`, or pause on the phone for a few seconds to let the window catch up. |
 | Firewall dialog the first time | Allow Node/your terminal on **private** networks. macOS and Windows prompt once per install; public networks are refused on purpose. |
 | Sharing stopped by itself | `l` toggles it, and teardown (q, ctrl+c, player exit) revokes the token. Restart the stream and press `l` again. |
+| `○ waiting` never becomes `● phone connected` | The page is not being fetched. Test the same address with any other port/tool to prove the phone↔computer path, then work through the permission and isolation steps above. |
 
 ## Still stuck?
 
