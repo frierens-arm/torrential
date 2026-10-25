@@ -31,6 +31,10 @@ interface CliArgs {
   keep: boolean
   keepDir?: string
   noPlayer: boolean
+  /** --phone: share the stream to the LAN and skip the desktop player. */
+  phone: boolean
+  /** --lan-ip: address shown on the QR instead of auto-detection. */
+  lanIp?: string
   listPlayers: boolean
   config?: string
   keepCache: boolean
@@ -81,6 +85,13 @@ const HELP = `
                             shows + movies), tv, or movies. /mode in the
                             search bar shows, applies and saves it
         --no-player         do not launch a player; show the stream URL only
+        --phone             stream to your phone instead of this machine:
+                            prints a scannable QR for the same Wi-Fi network
+                            and opens the file in the phone's web player.
+                            Works in-session too: press l while streaming
+        --lan-ip <addr>     advertise this LAN address on the QR (use it when
+                            auto-detection picks the wrong adapter on a
+                            multi-NIC / VPN machine)
         --keep-cache        keep raw cache pieces after exit (advanced)
         --clear-cache       wipe the whole cache directory, then run
         --doctor            check Node, config, cache, players, the stream
@@ -124,6 +135,8 @@ const HELP = `
     n / p                   cycle next / previous torrent for an episode
     g / G                   jump to top / bottom
     PgUp / PgDn             page through long episode lists
+    l                       share the stream to your phone (scan the QR);
+                            press again to stop sharing
     q / b / esc             back one tier (or stop the stream)
     ctrl+c                  quit (stops engine; files are wiped unless --keep)
 
@@ -149,6 +162,7 @@ function parseArgs(argv: string[]): CliArgs {
     query: '',
     keep: false,
     noPlayer: false,
+    phone: false,
     listPlayers: false,
     keepCache: false,
     clearCache: false,
@@ -168,6 +182,7 @@ function parseArgs(argv: string[]): CliArgs {
     '-c': 'config',
     '--sources': 'sources',
     '--keep-dir': 'keepDir',
+    '--lan-ip': 'lanIp',
     '--max-conns': 'maxConns',
     '--upload-limit': 'uploadLimit',
     '--ram-cache': 'ramCache',
@@ -199,6 +214,10 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (arg === '--no-player') {
       args.noPlayer = true
+      continue
+    }
+    if (arg === '--phone') {
+      args.phone = true
       continue
     }
     if (arg === '--list-players') {
@@ -268,6 +287,11 @@ function parseArgs(argv: string[]): CliArgs {
         const n = Number.parseInt(value, 10)
         if (!Number.isFinite(n) || n < 0 || n > 8192) fail('--ram-cache must be 0..8192 MB')
         args.ramCache = n
+      } else if (valueKey === 'lanIp') {
+        if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value.trim())) {
+          fail('--lan-ip expects an IPv4 address, e.g. 192.168.1.42')
+        }
+        args.lanIp = value.trim()
       } else if (valueKey === 'magnet') {
         args.magnet = value
       } else if (valueKey === 'player') {
@@ -569,6 +593,8 @@ function main(): void {
       magnetArg={args.magnet}
       noPlayer={args.noPlayer}
       playerOverride={args.player}
+      phone={args.phone}
+      lanIp={args.lanIp}
       keep={args.keep}
       warnings={warnings}
       configFile={args.config}

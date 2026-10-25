@@ -1,7 +1,7 @@
 {
   "name": "torrential",
-  "version": "2.1.1",
-  "description": "A torrential downpour in your terminal — search the swarm, stream instantly. torlink-inspired TUI fused with a programmatic WebTorrent streaming engine.",
+  "version": "2.2.0",
+  "description": "A torrential downpour in your terminal — search the swarm, stream instantly, or scan a QR and watch on your phone. torlink-inspired TUI fused with a programmatic WebTorrent streaming engine.",
   "type": "module",
   "bin": {
     "torrential": "dist/cli.js"
@@ -39,7 +39,10 @@
     "ink",
     "search",
     "magnet",
-    "peer-to-peer"
+    "peer-to-peer",
+    "qr",
+    "phone",
+    "cast"
   ],
   "repository": {
     "type": "git",
@@ -58,6 +61,7 @@
     "cheerio": "^1.0.0",
     "ink": "^5.0.1",
     "parse-torrent": "^11.0.24",
+    "qrcode-terminal": "^0.12.0",
     "react": "^18.3.1",
     "webtorrent": "^3.0.21"
   },

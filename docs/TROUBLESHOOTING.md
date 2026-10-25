@@ -64,6 +64,19 @@ missing: `chmod +x dist/cli.js`, or prefix it with `node`.
 | A movie never appears in the series list | Expected in `tv` mode — the strict filter drops non-episodic rows. Use `auto` or `movies`. |
 | Want the old streaming behavior | `--no-turbo` (or `"turbo": false`) restores webtorrent's built-in server. |
 
+## Phone sharing
+
+| Symptom | What it means / what to do |
+|---|---|
+| The phone loads nothing (timeout) | Usually Wi-Fi **client/AP isolation** or a guest SSID. Join the same normal network, disable "AP isolation"/"client isolation" on the router, and check that the phone is not on cellular only. |
+| `phone share: this stream server is loopback-only — restart with --phone` | The socket fell back to `127.0.0.1` (typically an IPv6-less setup), so the LAN cannot dial it. Relaunch with `--phone`, which binds `0.0.0.0`, and press `l`. |
+| `phone share: no LAN IPv4 address found` | Detection skipped every interface (VPN-only, link-local, virtual). Pass `--lan-ip <your-computer-ip>` — the URL under the QR can always be typed manually too. |
+| The QR shows the wrong address | A VPN or second adapter won the ranking. `torrential --phone --lan-ip 192.168.1.42`. |
+| The page says the browser cannot decode the file | MKV, HEVC and AC3 are not browser codecs. Install VLC and tap **Open in VLC**, or copy the link into Infuse/nPlayer. MP4/WebM play inline. |
+| Playback starts, then buffers forever | The phone took over as the reader, so the swarm is now the bottleneck. Watch `buffer ≈ Ns ahead`, or pause on the phone for a few seconds to let the window catch up. |
+| Firewall dialog the first time | Allow Node/your terminal on **private** networks. macOS and Windows prompt once per install; public networks are refused on purpose. |
+| Sharing stopped by itself | `l` toggles it, and teardown (q, ctrl+c, player exit) revokes the token. Restart the stream and press `l` again. |
+
 ## Still stuck?
 
 Reproduce with a log and open an issue:

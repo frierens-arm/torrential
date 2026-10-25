@@ -64,13 +64,16 @@ the **Ink TUI** binds it all into one interactive surface.
 
 | Path | Responsibility |
 |---|---|
-| `src/cli.tsx` | Arg parsing (`--magnet`, `--player`, `--port`, `--sources`, `--mode`, `-k/--keep[=<dir>]`, `--keep-dir`, `--no-player`, `--list-players`, `--doctor`, `--offline`, `--debug[=<path>]`, `--config`, `--keep-cache`, `--clear-cache`, `--turbo/--no-turbo`, `--max-conns`, `--upload-limit`, `--ram-cache`, `--help`, `--version`), config load + CLI overrides, debug-log activation, metadata-cache pruning at boot, `EngineHost` construction (client pre-warm at boot), `--list-players` / `--doctor` utilities, SIGINT → shutdown bridge, EPIPE safety. |
+| `src/cli.tsx` | Arg parsing (`--magnet`, `--player`, `--port`, `--sources`, `--mode`, `-k/--keep[=<dir>]`, `--keep-dir`, `--no-player`, `--phone`, `--lan-ip`, `--list-players`, `--doctor`, `--offline`, `--debug[=<path>]`, `--config`, `--keep-cache`, `--clear-cache`, `--turbo/--no-turbo`, `--max-conns`, `--upload-limit`, `--ram-cache`, `--help`, `--version`), config load + CLI overrides, debug-log activation, metadata-cache pruning at boot, `EngineHost` construction (client pre-warm at boot), `--list-players` / `--doctor` utilities, SIGINT → shutdown bridge, EPIPE safety. |
 | `src/doctor.ts` | `--doctor`: one plain-text pass over runtime, paths, cache writability, disk space, player detection, port availability and a live probe of each indexer. Network probes are skipped with `--offline`; the report is safe to paste into a bug report and the command exits non-zero when a hard failure is found. |
 | `src/config.ts` | XDG/Windows paths, JSON load/validate/save with friendly warnings; defaults are materialized on first run. v1.2 speed keys: `turbo`, `max_conns`, `ram_cache_mb`, `upload_limit_kbps`, `head_start_mb`, `tail_prefetch_mb`, `window_secs`. `mode` (`auto` \| `tv` \| `movies`, default `auto`) is validated like `theme` — unknown values warn and fall back to `auto`. Legacy configs load unchanged (missing keys take defaults). |
 | `src/providers/*` | One module per indexer + `index.ts` aggregator. `runSearch()` accepts one query or a list (SxxExx / 1xx variants), fans every provider across all of them, dedupes cross-query, and shapes each row through `toTvResult()`: episodic rows get show/scope tags, non-episodic rows survive as GENERIC rows (`scope === undefined`) — tagged, not dropped, so the auto/movies modes can use them. `opts.mode` flows to providers: 1337x scrapes its TV category (`/category-search/<q>/TV/1/`) in tv mode and the plain catalogue search (`/search/<q>/1/`) in movies/auto (and as the mirror-compat fallback in tv mode). `ProviderInfo.kind` ('torrent' \| 'api') is the slot a future API-based backend plugs into. |
 | `src/engine/host.ts` | `EngineHost` — owns the session-wide WebTorrent client; constructed at boot so DHT bootstrap + first tracker announces happen before the user picks a result. Reused across streams; destroyed on app exit. |
 | `src/engine/stream.ts` | The streaming pipeline: metadata cache (load/save `.torrent` per info-hash), `client.add` (with `storeCacheSlots` RAM budget; `announce` merge for cached metadata, skipped for private torrents), **TV target resolution** (`StreamTarget`: auto / episode / exact file — `pickEpisodeFile()` matches SxxExx, 1xx and absolute numbering against FILE names; ambiguous multi-file packs flip to `awaitingFile` until `selectFile()` answers from the interactive picker), head-start + tail prefetch (`select(…, 3)` + `critical()`), server bring-up, stats at 4 Hz, teardown via `client.remove(torrent, { destroyStore: false })` so the client (and its warm DHT state) survives. |
-| `src/engine/turbo-server.ts` | Turbo HTTP serving layer: RFC 7233 Range parsing (206/416, suffix + open-ended + multi-range→first), HEAD/OPTIONS, always `Content-Length` (never chunked), no redirects, direct alias routes (`/stream`, `/stream.<ext>`, `/<fileIndex>`), canonical `/webtorrent/<hash>/<path>`, DLNA marker, CORS, `setNoDelay`/keep-alive socket hygiene, dual-stack bind with `127.0.0.1` fallback, playhead tracking (`selectPlayhead()`: minimum position across *hot* readers, with a two-tier activity window so paused players and EOF probes cannot drag it), adaptive rolling window (priority-3 *stream selections* — exact-match removable, never clip the whole-file selection), stall escalation via `critical()`. Structurally typed against minimal interfaces so `tools/smoke-turbo.mjs` can exercise it with fakes. |
+| `src/engine/turbo-server.ts` | Turbo HTTP serving layer, including the 2.2.0 phone share: `remotePathAllowed()` gates every non-loopback request (nothing while sharing is off; only `/p/<token>` + `/p/<token>/media.<ext>` while it is on), `enableSharing()`/`disableSharing()` own the token, and the tokenized page is a self-contained mobile web player with a VLC hand-off. Core serving: RFC 7233 Range parsing (206/416, suffix + open-ended + multi-range→first), HEAD/OPTIONS, always `Content-Length` (never chunked), no redirects, direct alias routes (`/stream`, `/stream.<ext>`, `/<fileIndex>`), canonical `/webtorrent/<hash>/<path>`, DLNA marker, CORS, `setNoDelay`/keep-alive socket hygiene, dual-stack bind with `127.0.0.1` fallback, playhead tracking (`selectPlayhead()`: minimum position across *hot* readers, with a two-tier activity window so paused players and EOF probes cannot drag it), adaptive rolling window (priority-3 *stream selections* — exact-match removable, never clip the whole-file selection), stall escalation via `critical()`. Structurally typed against minimal interfaces so `tools/smoke-turbo.mjs` can exercise it with fakes. |
+| `src/utils/lan.ts` | Pure LAN helpers: `pickLanAddress()` ranks interface IPv4s (192.168 → 172.16 → 10, physical names boosted, docker/utun/vEthernet demoted, loopback/link-local/IPv6 skipped), `isLoopbackAddress()`/`normaliseRemoteAddress()` unwrap `::ffff:` peers, `createShareToken()` makes the 8-char share path. |
+| `src/utils/qr.ts` | Terminal QR rendering (`qrcode-terminal`, smallest EC level, half blocks with no ANSI) plus a per-URL memo so the 4 Hz stats tick never re-encodes. |
+| `src/utils/playback.ts` | `planPlaybackReturn()` — pure post-playback routing. A finished episode lands on the episode grid with the cursor on the next one; an early stop keeps the pre-flight card. |
 | `src/utils/players.ts` | Player detection (memoized per session), launch chain resolution, spawn + graceful kill. Per-player argv: VLC gets `--play-and-exit` (+ `--network-caching=10000` when no user flags), mpv gets buffering defaults (`--cache-secs=90`, `--demuxer-readahead-secs=90`, …) when no user flags, IINA gets `iina-cli --no-stdin --keep-running <url>` (URL positional — unknown `--flags` are forwarded to mpv and break loading, verified against iina-cli's source). User `player_flags` always override the injected defaults. |
 | `src/utils/keep.ts` | `--keep` file rescue: collision-safe `rename()` with EXDEV copy+delete fallback. |
 | `src/utils/log.ts` | Opt-in debug logger. Path resolution (`--debug[=<path>]`, `TORRENTIAL_DEBUG`, `TORRENTIAL_LOG`), append-only ISO-timestamped lines, truncation at 2 MB, and a hard "never throw, never touch stdout" contract so a broken path cannot corrupt the TUI or slow a stream tick. |
@@ -83,7 +86,7 @@ the **Ink TUI** binds it all into one interactive surface.
 | `src/utils/http.ts` | `fetchText`/`fetchJson` with timeouts, browser-ish UA, friendly network errors. |
 | `src/utils/ascii.ts` | Wordmark variants (ANSI Shadow / double-block / Calvin S), spinner + wave frames, gradient math. |
 | `src/ui/*` | Screens (`SearchScreen`, `SeriesScreen`, `SeasonScreen`, `EpisodeScreen`, `DetailScreen`, `FilePickerScreen`, `StreamScreen`), animated components (`Logo`, `Spinner`, `WaveLine`, `ProgressBar`, `TextInput`, `ProviderChips`), hooks (`useTerminalSize`, `useTick`). |
-| `src/ui/hooks/*` | Session logic pulled out of `App.tsx`: `useSearch` (provider aggregator, dedupe, supplemental hunts, status chips), `useStreamSession` (engine + player hand-off + teardown), `usePreferences` (skin picker, `/theme`, `/mode`, session content mode). Callbacks travel through refs so in-flight searches/streams are never restarted by a re-render. |
+| `src/ui/hooks/*` | Session logic pulled out of `App.tsx`: `useSearch` (provider aggregator, dedupe, supplemental hunts, status chips), `useStreamSession` (engine + player hand-off, phone share state, teardown), `usePreferences` (skin picker, `/theme`, `/mode`, session content mode). Callbacks travel through refs so in-flight searches/streams are never restarted by a re-render. |
 | `src/webtorrent.d.ts` | Ambient typings for the exact webtorrent surface used. |
 
 ## Data flows
@@ -168,6 +171,33 @@ Verified against webtorrent v3 (2.8.x has an upstream crash: hex-string
    buffer-ahead estimate) plus event-driven phase changes; a quiet swarm
    (0 peers / no data for 25 s) escalates to a visible `⚠`.
 
+### Phone hand-off
+
+Pressing `l` (or `--phone`) never opens a second streaming path — it reuses the
+turbo server and just changes who may talk to it and where the bytes go:
+
+1. `StreamEngine.enablePhoneShare()` asks `utils/lan.ts` for the advertised
+   IPv4 (unless `--lan-ip` pinned one), mints an 8-character token and hands both
+   to `TurboServer.enableSharing()`.
+2. `useStreamSession` closes the desktop player with the exit handler
+   suppressed, then reports `{active, url, error}` to `StreamScreen`, which
+   renders the QR from `utils/qr.ts`.
+3. `GET /p/<token>` returns the mobile page; its `<video>` points at
+   `/p/<token>/media.<ext>`. That route calls the same `serveMedia()` as every
+   other consumer, so Range/206/416, HEAD, MIME and playhead tracking are
+   unchanged — the phone's reads simply become the playhead, and the rolling
+   piece window follows them.
+4. The gate runs before routing: with no token, non-loopback peers get 404 on
+   every route; with a token, only the page and its media route are visible.
+   `l` again clears the token, and teardown drops it with the server.
+   `--phone` additionally makes the server bind `0.0.0.0` first, so a machine
+   without IPv6 never falls back to a loopback-only socket.
+
+MKV/HEVC/AC3 cannot be decoded by mobile browsers, so the page carries
+`intent://` (Android) and `vlc-x-callback://` (iOS) links, plus a copy-link
+fallback. Nothing on the page offers a download or sets
+`Content-Disposition` — it is a stream from beginning to end.
+
 ### Teardown
 
 Three triggers converge on the same path: player process exit (binary
@@ -220,8 +250,9 @@ waits for that (press `q` in the TUI to force it earlier).
 - **One `listen()` per built-in server**: port availability is probed with a
   throwaway `net.createServer` first, avoiding the duplicate-handler bug that
   a naive retry-on-EADDRINUSE would cause. The turbo server binds through a
-  candidate ladder instead (dual-stack `::` first, then `127.0.0.1`; ports
-  +0…+10; then an OS-assigned one).
+  candidate ladder instead (dual-stack `::` first — or `0.0.0.0` when
+  `--phone` asks for LAN-first binding — then `127.0.0.1`; ports +0…+10; then
+  an OS-assigned one).
 - **The turbo server is HTTP-dialect-strict** so the "everything with an
   HTTP URL box" compatibility bar holds: always `Content-Length` (no chunked
   encoding — DLNA renderers and smart TVs choke on it), never a redirect for
@@ -257,6 +288,12 @@ CI runs both sets on Linux/macOS/Windows × Node 22/24. A `v*` tag publishes to
 npm with provenance and attaches the tarball to the GitHub release.
 
 ## Dependency & security notes
+
+Runtime dependencies stay deliberately few. 2.2.0 adds exactly one:
+`qrcode-terminal` (Apache-2.0, pure JS, **no transitive dependencies and no
+install scripts**) which only draws the QR string. The mobile page it points at
+is hand-written HTML/CSS with ~30 lines of inline JS — it ships no framework and
+makes no external requests, so the phone needs nothing installed.
 
 `package.json` carries two fields that must not be removed:
 

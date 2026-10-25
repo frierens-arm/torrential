@@ -1,6 +1,7 @@
 import http from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Socket } from 'node:net'
+import { isLoopbackAddress } from '../utils/lan.js'
 
 const MB = 1024 * 1024
 
@@ -46,6 +47,12 @@ export interface TurboServerOptions {
   port: number
   /** Seconds of video to keep downloaded ahead of the playhead. */
   windowSecs?: number
+  /**
+   * Bind all interfaces first instead of loopback. Set for --phone so the
+   * server is reachable from the LAN from the very first request; the phone
+   * URL itself stays token-gated either way.
+   */
+  preferLan?: boolean
   /** Resolve a torrent by infoHash for /webtorrent/<hash>/… URLs. */
   resolveTorrent?: (infoHash: string) => TurboTorrent | null
 }
@@ -228,6 +235,24 @@ export function selectPlayhead(
   return null
 }
 
+/**
+ * Is `pathname` reachable from this peer?
+ *
+ * Loopback sees every route. A LAN peer sees nothing unless a phone share is
+ * live, and even then only the tokenized page and its media route. Exported
+ * so the gate can be tested without a second network interface.
+ */
+export function remotePathAllowed(
+  pathname: string,
+  shareToken: string | null,
+  remoteAddress: string | undefined
+): boolean {
+  if (isLoopbackAddress(remoteAddress)) return true
+  if (!shareToken) return false
+  const base = `/p/${shareToken}`
+  return pathname === base || pathname === `${base}/` || pathname.startsWith(`${base}/`)
+}
+
 const CLAMP = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
 
 export class TurboServer {
@@ -246,6 +271,10 @@ export class TurboServer {
   private boundHost = '127.0.0.1'
   private printHost = '127.0.0.1'
   private closed = false
+
+  /** Non-null while a phone share is live: /p/<token> is the only LAN route. */
+  private shareToken: string | null = null
+  private shareHost: string | null = null
 
   // telemetry
   private speedEwma: number | null = null
@@ -289,6 +318,44 @@ export class TurboServer {
     return this.port
   }
 
+  /** True when the socket accepts LAN connections (not loopback-only). */
+  get lanCapable(): boolean {
+    return this.boundHost === '0.0.0.0' || this.boundHost === '::'
+  }
+
+  /** True while the phone page is exposed on the LAN. */
+  get sharing(): boolean {
+    return this.shareToken !== null
+  }
+
+  /**
+   * Expose the current stream to the LAN behind a random token. Requests
+   * from other devices are refused outside /p/<token> — see handleRequest.
+   */
+  enableSharing(host: string, token: string): string {
+    this.shareHost = host
+    this.shareToken = token
+    return this.sharePageUrl ?? ''
+  }
+
+  /** Revoke LAN access and forget the token. */
+  disableSharing(): void {
+    this.shareToken = null
+    this.shareHost = null
+  }
+
+  /** URL the QR encodes: the mobile landing page, never the raw media path. */
+  get sharePageUrl(): string | null {
+    if (!this.shareToken || !this.shareHost) return null
+    return `http://${this.shareHost}:${this.port}/p/${this.shareToken}`
+  }
+
+  /** Direct media URL behind the share token (what the phone page plays). */
+  private shareMediaPath(): string | null {
+    if (!this.shareToken || !this.file) return null
+    return `/p/${this.shareToken}/media${extOf(this.file.path || this.file.name)}`
+  }
+
   /* -------------------------------------------------------------- *
    * Lifecycle
    * -------------------------------------------------------------- */
@@ -302,11 +369,17 @@ export class TurboServer {
     const ports: number[] = [preferred]
     for (let i = 1; i <= 10; i++) ports.push(preferred + i)
     ports.push(0) // OS choice as last resort
-    for (const host of ['::', '127.0.0.1']) {
+    // --phone binds IPv4 wildcard first: maximally portable across home
+    // routers, and it is the address family phones actually dial.
+    const hosts = this.opts.preferLan ? ['0.0.0.0', '::', '127.0.0.1'] : ['::', '127.0.0.1']
+    for (const host of hosts) {
       for (const port of ports) {
         const bound = await this.tryListen(port, host)
         if (bound !== null) {
           this.port = bound
+          // Record the host that actually bound: `lanCapable` and the phone
+          // hand-off depend on it, and detectPrintHost probes accordingly.
+          this.boundHost = host
           this.printHost = await this.detectPrintHost(bound)
           return bound
         }
@@ -397,6 +470,7 @@ export class TurboServer {
 
   async close(): Promise<void> {
     this.closed = true
+    this.disableSharing()
     if (this.tickTimer) {
       clearInterval(this.tickTimer)
       this.tickTimer = null
@@ -464,6 +538,18 @@ export class TurboServer {
       .join('/')
 
     try {
+      // ── LAN gate ──────────────────────────────────────────────────────
+      // Every route belongs to the local machine unless a phone share is
+      // live — and even then only the tokenized page + media routes open.
+      // The canonical /webtorrent/<hash>/<file> URL never leaves loopback,
+      // so a shared stream cannot be reached by guessing a torrent path.
+      const shareBase = this.shareToken ? `/p/${this.shareToken}` : null
+      if (!remotePathAllowed(pathname, this.shareToken, req.socket.remoteAddress)) {
+        res.writeHead(404, { 'Content-Length': 0 })
+        res.end()
+        return
+      }
+
       if (req.method === 'OPTIONS') {
         res.writeHead(204, {
           'Access-Control-Allow-Origin': '*',
@@ -484,6 +570,27 @@ export class TurboServer {
         return
       }
       if (pathname === '/favicon.ico') {
+        res.writeHead(404, { 'Content-Length': 0 })
+        res.end()
+        return
+      }
+
+      // ── phone share: landing page + token-scoped media ──
+      if (shareBase && (pathname === shareBase || pathname === `${shareBase}/`)) {
+        this.servePhonePage(req, res)
+        return
+      }
+      if (shareBase && pathname.startsWith(`${shareBase}/`)) {
+        const leaf = pathname.slice(shareBase.length + 1)
+        if (leaf === 'media' || /^media\.[a-z0-9]+$/i.test(leaf)) {
+          if (this.torrent && this.file) {
+            await this.serveMedia(req, res, this.torrent, this.file)
+          } else {
+            res.writeHead(503, { 'Content-Length': 0, 'Retry-After': '1' })
+            res.end()
+          }
+          return
+        }
         res.writeHead(404, { 'Content-Length': 0 })
         res.end()
         return
@@ -547,6 +654,34 @@ export class TurboServer {
         /* socket already gone */
       }
     }
+  }
+
+  /**
+   * The mobile landing page: an inline web player plus a hand-off to a
+   * native player for containers a browser cannot decode. Served only while
+   * a share token is live; it never lists the torrent's other files.
+   */
+  private servePhonePage(req: IncomingMessage, res: ServerResponse): void {
+    const mediaPath = this.shareMediaPath()
+    const file = this.file
+    if (!mediaPath || !file) {
+      res.writeHead(503, { 'Content-Length': 0, 'Retry-After': '1' })
+      res.end()
+      return
+    }
+    const payload = Buffer.from(
+      renderPhonePage({ fileName: file.name, fileSize: file.length, mediaPath }),
+      'utf8'
+    )
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': payload.length,
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+      'X-Robots-Tag': 'noindex',
+      'Access-Control-Allow-Origin': '*'
+    })
+    res.end(reqless(res) ? undefined : payload)
   }
 
   private serveListing(res: ServerResponse, torrent?: TurboTorrent): void {
@@ -843,6 +978,136 @@ function escapeHtml(text: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+}
+
+/** Compact size label for the phone page (no dependencies, no locale drift). */
+function humanBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return 'unknown size'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000
+    unit++
+  }
+  return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`
+}
+
+/**
+ * Self-contained phone page.
+ *
+ * Deliberately dependency-free: no framework, no build step, no external
+ * request. It is a web player first (tap once to satisfy the mobile autoplay
+ * rule) and a hand-off to VLC second, for containers — mkv, HEVC, AC3 — a
+ * mobile browser refuses to decode. Nothing here saves the file: playback is
+ * an ordinary HTTP Range stream from the computer.
+ */
+function renderPhonePage(info: {
+  fileName: string
+  fileSize: number
+  mediaPath: string
+}): string {
+  const name = escapeHtml(info.fileName)
+  const size = humanBytes(info.fileSize)
+  const mediaJson = JSON.stringify(info.mediaPath)
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>${name} · torrential</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: #0b0f14; color: #e6edf3;
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 14px; padding: 16px; }
+video { width: 100%; max-width: 960px; max-height: 68vh; background: #000; border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.55); }
+#tap { position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%); z-index: 2;
+  border: 0; border-radius: 999px; padding: 14px 26px; font-size: 17px; font-weight: 600;
+  color: #04120c; background: #6ee7a8; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+#tap[hidden] { display: none; }
+.meta { width: 100%; max-width: 960px; display: flex; flex-direction: column; gap: 6px; }
+.name { font-weight: 600; word-break: break-word; }
+.sub, .hint { color: #8b98a5; font-size: 13px; }
+.note { color: #f0c674; font-size: 13px; }
+.note.warn { color: #ff7b72; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.btn { appearance: none; border: 1px solid #2b333d; border-radius: 10px; padding: 11px 16px;
+  font-size: 14px; font-weight: 600; text-decoration: none; color: #e6edf3; background: #161d25; }
+.btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.hint { margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <video id="player" src="${info.mediaPath}" controls autoplay playsinline webkit-playsinline preload="auto"></video>
+  <button id="tap" type="button">▶ tap to play</button>
+  <div class="meta">
+    <div class="name">${name}</div>
+    <div class="sub">${size} · streaming from your computer over Wi-Fi</div>
+    <div class="note" id="note">mkv, HEVC or AC3 files may not decode in a browser — use a player below.</div>
+    <div class="actions">
+      <a id="vlc" class="btn primary" href="#" rel="noreferrer">Open in VLC</a>
+      <button id="copy" class="btn" type="button">Copy stream link</button>
+    </div>
+    <p class="hint">Nothing is saved on this phone. The file streams from the computer until you close this page.</p>
+  </div>
+</main>
+<script>
+(function () {
+  var MEDIA = ${mediaJson};
+  var video = document.getElementById('player');
+  var tap = document.getElementById('tap');
+  var note = document.getElementById('note');
+  var raw = location.origin + MEDIA;
+  var ua = navigator.userAgent;
+  var vlc = document.getElementById('vlc');
+
+  if (/Android/i.test(ua)) {
+    vlc.textContent = 'Open in a player';
+    vlc.href = 'intent://' + location.host + MEDIA +
+      '#Intent;scheme=http;type=video/*;action=android.intent.action.VIEW;end';
+  } else if (/iPad|iPhone|iPod/i.test(ua)) {
+    vlc.href = 'vlc-x-callback://x-callback-url/stream?url=' + encodeURIComponent(raw);
+  } else {
+    vlc.hidden = true;
+  }
+
+  function hideTap() { tap.hidden = true; }
+  tap.addEventListener('click', function () {
+    hideTap();
+    video.play().catch(function () {});
+  });
+  video.addEventListener('playing', hideTap);
+  video.addEventListener('error', function () {
+    hideTap();
+    note.textContent = 'This browser cannot decode the file — open it in a player instead.';
+    note.className = 'note warn';
+  });
+
+  document.getElementById('copy').addEventListener('click', function () {
+    var button = this;
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(raw).then(function () {
+      button.textContent = 'Copied';
+      setTimeout(function () { button.textContent = 'Copy stream link'; }, 1600);
+    }).catch(function () {});
+  });
+
+  if ('wakeLock' in navigator) {
+    video.addEventListener('playing', function () {
+      navigator.wakeLock.request('screen').catch(function () {});
+    });
+  }
+  setTimeout(function () { if (!video.paused) hideTap(); }, 500);
+})();
+</script>
+</body>
+</html>`
 }
 
 function reqless(res: ServerResponse): boolean {

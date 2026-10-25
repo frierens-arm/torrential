@@ -19,6 +19,9 @@ Cache location (used for piece storage while streaming):
 Invalid values are never fatal: torrential reports them as a `⚠` banner in the
 TUI and falls back to the matching default. Unknown keys produce a warning too.
 
+Phone sharing is session-only: `--phone` and `--lan-ip` are CLI flags, not
+config keys, and no sharing state is persisted between runs.
+
 ## Fields
 
 ### `default_player` — string, default `"system"`

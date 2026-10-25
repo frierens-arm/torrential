@@ -8,6 +8,7 @@ import type { KeptFile, ReadyInfo, StreamStats, StreamTarget, TorrentFileInfo } 
 import { TRACKERS, VIDEO_EXTENSIONS } from '../constants.js'
 import { describeTorrentId, infoHashFromId } from '../utils/magnet.js'
 import { moveFileToKeepDir } from '../utils/keep.js'
+import { createShareToken, detectLanAddress } from '../utils/lan.js'
 import { parseTvTitle, scopeLabel } from '../utils/tv.js'
 import { metaCachePath } from '../utils/cache.js'
 import { log, logError } from '../utils/log.js'
@@ -59,6 +60,8 @@ export interface EngineOptions {
   tailPrefetchBytes: number
   /** Rolling window target in seconds of video ahead of the playhead. */
   windowSecs: number
+  /** --phone: bind all interfaces up front so the LAN can reach the stream. */
+  preferLan?: boolean
   /** Filled in by start() — used for stat snapshots before metadata lands. */
   torrentId?: string
 }
@@ -290,6 +293,38 @@ export class StreamEngine {
     return this.url
   }
 
+  /**
+   * Expose the active file to the LAN behind a fresh token.
+   *
+   * Returns the phone page URL, or an actionable error string. Sharing is a
+   * turbo-server feature: the plain webtorrent fallback binds loopback and
+   * has no playhead-aware window to keep fed, so it is refused rather than
+   * silently degraded.
+   */
+  enablePhoneShare(hostOverride?: string): { url: string } | { error: string } {
+    const turbo = this.turboServer
+    if (!turbo || !this.targetFile) {
+      return { error: 'phone sharing needs an active turbo stream — drop --no-turbo' }
+    }
+    if (!turbo.lanCapable) {
+      return { error: 'this stream server is loopback-only — restart with --phone' }
+    }
+    const override = (hostOverride ?? '').trim()
+    const host = override.length > 0 ? override : (detectLanAddress()?.address ?? null)
+    if (!host) {
+      return { error: 'no LAN IPv4 address found — pass --lan-ip <your-computer-ip>' }
+    }
+    const url = turbo.enableSharing(host, createShareToken())
+    log('stream:phone-share', { host, url })
+    return { url }
+  }
+
+  /** Revoke the LAN token; the local stream keeps running. */
+  disablePhoneShare(): void {
+    this.turboServer?.disableSharing()
+    log('stream:phone-share-off')
+  }
+
   private addWarning(text: string): void {
     if (!this.warnings.includes(text)) {
       this.warnings = [...this.warnings, text].slice(-4)
@@ -453,6 +488,7 @@ export class StreamEngine {
         const turbo = new TurboServer({
           port: this.opts.port,
           windowSecs: this.opts.windowSecs,
+          preferLan: this.opts.preferLan,
           resolveTorrent: hash => {
             const found = client.torrents.find(t => t.infoHash === hash)
             return (found as unknown as TurboTorrent) ?? null

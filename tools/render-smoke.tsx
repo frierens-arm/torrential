@@ -10,7 +10,9 @@ import React from 'react'
 import { render } from 'ink-testing-library'
 import { MovieResultsScreen } from '../src/ui/screens/MovieResultsScreen.js'
 import { DetailScreen } from '../src/ui/screens/DetailScreen.js'
-import type { ProviderStatus, SearchResult } from '../src/types.js'
+import { StreamScreen } from '../src/ui/screens/StreamScreen.js'
+import { renderQr } from '../src/utils/qr.js'
+import type { ProviderStatus, SearchResult, StreamStats } from '../src/types.js'
 
 let failures = 0
 const check = (name: string, cond: boolean, extra = '') => {
@@ -105,6 +107,66 @@ check('renders movie context label', detailOut.includes('movie · 2023'), detail
 check('renders torrent title', detailOut.includes('Oppenheimer'))
 check('auto target describes whole-torrent streaming', detailOut.includes('multi-file packs open a file picker'), detailOut)
 detail.unmount()
+
+/* ── 4. stream screen with the phone QR ── */
+const SHARE_URL = 'http://192.168.1.42:8000/p/abcd2345'
+const stats: StreamStats = {
+  phase: 'streaming',
+  title: 'Breaking Bad',
+  fileName: 'Breaking.Bad.S01E01.720p.mkv',
+  fileSize: 1_200_000_000,
+  fileIndex: 0,
+  fileCount: 1,
+  videoFileCount: 1,
+  url: 'http://127.0.0.1:8000/webtorrent/' + 'a'.repeat(40) + '/Breaking.Bad.S01E01.720p.mkv',
+  port: 8000,
+  progress: 0.42,
+  overallProgress: 0.31,
+  downloaded: 500_000_000,
+  downloadSpeed: 3_800_000,
+  uploadSpeed: 120_000,
+  peers: 18,
+  timeRemaining: 41,
+  warnings: [],
+  turbo: true,
+  bufferAheadSecs: 24,
+  awaitingFile: false,
+  backend: 'torrent'
+}
+
+const sharing = render(
+  <StreamScreen
+    stats={stats}
+    player={null}
+    phone={{ active: true, url: SHARE_URL, error: null }}
+    onTogglePhone={() => {}}
+    keepCache={false}
+    onStop={() => {}}
+  />
+)
+const sharingOut = sharing.lastFrame() ?? ''
+check('stream screen advertises the phone share', sharingOut.includes('watch on your phone'), sharingOut)
+check('renders the QR matrix inside Ink', renderQr(SHARE_URL).some(line => sharingOut.includes(line)), sharingOut)
+check('prints the share URL for manual entry', sharingOut.includes(SHARE_URL), sharingOut)
+check('states that the phone stores nothing', sharingOut.includes('nothing is saved on the phone'))
+check('advertises the l shortcut', sharingOut.includes('stop sharing'))
+check('keeps the desktop endpoint visible', sharingOut.includes('127.0.0.1:8000'))
+sharing.unmount()
+
+const shareFailed = render(
+  <StreamScreen
+    stats={stats}
+    player={null}
+    phone={{ active: false, url: null, error: 'no LAN IPv4 address found — pass --lan-ip <your-computer-ip>' }}
+    onTogglePhone={() => {}}
+    keepCache={false}
+    onStop={() => {}}
+  />
+)
+const failedOut = shareFailed.lastFrame() ?? ''
+check('surfaces a share error with a fix', failedOut.includes('--lan-ip'), failedOut)
+check('offers to start sharing', failedOut.includes('watch on phone'), failedOut)
+shareFailed.unmount()
 
 console.log(failures === 0 ? '\nRENDER SMOKE OK' : `\n${failures} RENDER FAILURES`)
 process.exit(failures === 0 ? 0 : 1)

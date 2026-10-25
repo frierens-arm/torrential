@@ -3,6 +3,42 @@
 Notable changes to **torrential**. The CLI flags and `config.json` keys are the
 public surface; anything marked *internal* can change without notice.
 
+## 2.2.0 — 2026-10-24
+
+### Added
+- **Watch on your phone.** `l` on the stream screen (or `--phone` at launch)
+  prints a QR code for the file you are already streaming. Scanning it opens a
+  dependency-free mobile web player on the same Wi-Fi and playback moves to the
+  phone: the desktop player closes, the engine keeps downloading and seeding,
+  and the turbo playhead follows the phone's reads instead. Nothing is saved on
+  the handset.
+- **LAN-only, token-scoped sharing.** While sharing is off, every non-loopback
+  request is refused on every route. While it is on, only `/p/<random-token>`
+  and its media route are reachable — `/webtorrent/<hash>/…` never leaves the
+  machine. `l` again revokes the token immediately.
+- **Native player hand-off** from the phone page — Android `intent://`, iOS
+  `vlc-x-callback://` — for containers a browser refuses (MKV, HEVC, AC3), plus
+  a copy-link button and a best-effort screen wake lock.
+- **`--lan-ip <addr>`** pins the address advertised on the QR for multi-NIC or
+  VPN machines; detection otherwise prefers 192.168 → 172.16 → 10 and ranks
+  virtual adapters last.
+- Tests for LAN address selection, loopback classification, share-token gating,
+  the phone page, Range responses on the share route and QR rendering.
+  `tools/render-smoke.tsx` now asserts the QR draws inside Ink.
+
+### Changed
+- **Finishing an episode returns to the episode grid**, cursor on the next
+  episode, instead of the torrent pre-flight card for the episode just watched.
+  Stopping early still returns to the card. The decision lives in
+  `utils/playback.ts` so it is unit-tested.
+- `qrcode-terminal` (Apache-2.0, no runtime dependencies) renders the QR as
+  Unicode half blocks — no ANSI escapes, so Ink measures and wraps it normally.
+
+### Fixed
+- Player-exit → teardown wiring is suppressed during a phone hand-off, so
+  closing the desktop player no longer kills the stream the phone just started
+  using.
+
 ## 2.1.1 — 2026-10-24
 
 ### Added

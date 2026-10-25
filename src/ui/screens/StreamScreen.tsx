@@ -1,8 +1,11 @@
+import { useMemo } from 'react'
 import { Box, Text } from 'ink'
 import { useInput } from 'ink'
 import type { StreamStats } from '../../types.js'
 import { THEME } from '../../constants.js'
 import { formatBytes, formatEta, formatSpeed, truncateStart } from '../../utils/format.js'
+import { qrWidth, renderQr } from '../../utils/qr.js'
+import type { PhoneShareState } from '../hooks/useStreamSession.js'
 import { ProgressBar } from '../components/ProgressBar.js'
 import { Spinner } from '../components/Spinner.js'
 import { useTerminalSize } from '../hooks.js'
@@ -16,11 +19,18 @@ export interface PlayerInfo {
 export interface StreamScreenProps {
   stats: StreamStats | null
   player: PlayerInfo | null
+  /** Phone hand-off state: QR URL, errors, live flag. */
+  phone: PhoneShareState
+  /** Toggle LAN sharing for this stream (`l`). */
+  onTogglePhone: () => void
   keepCache: boolean
   /** Set when --keep is active: the file is moved here on teardown. */
   keepDir?: string | null
   onStop: () => void
 }
+
+/** Below this width the QR would wrap and stop scanning — show the URL only. */
+const MIN_QR_WIDTH = 40
 
 const PHASE_COPY: Record<StreamStats['phase'], string> = {
   connecting: 'contacting the swarm…',
@@ -37,11 +47,28 @@ const PHASE_COPY: Record<StreamStats['phase'], string> = {
  * The live playback dashboard: gradient sheen progress bar, speeds,
  * peers, cache ratio, and the local URL the player is attached to.
  */
-export function StreamScreen({ stats, player, keepCache, keepDir, onStop }: StreamScreenProps): React.ReactElement {
+export function StreamScreen({
+  stats,
+  player,
+  phone,
+  onTogglePhone,
+  keepCache,
+  keepDir,
+  onStop
+}: StreamScreenProps): React.ReactElement {
   const { width } = useTerminalSize()
+  const qrLines = useMemo(() => (phone.url ? renderQr(phone.url) : []), [phone.url])
+  const qrFits =
+    phone.url !== null &&
+    width >= MIN_QR_WIDTH &&
+    qrLines.length > 0 &&
+    qrWidth(qrLines) < width - 4
 
   useInput((input, key) => {
     if (input === 'q' || input === 'b' || key.escape) onStop()
+    if (input === 'l' && (stats?.phase === 'streaming' || stats?.phase === 'ready' || stats?.phase === 'done')) {
+      onTogglePhone()
+    }
   })
 
   if (!stats) {
@@ -114,6 +141,35 @@ export function StreamScreen({ stats, player, keepCache, keepDir, onStop }: Stre
           <Text dimColor color={THEME.subtle}>
             (open this URL manually in any player if nothing launches)
           </Text>
+        </Box>
+      )}
+
+      {/* phone hand-off: QR + tokenized LAN URL */}
+      {phone.active && phone.url && (
+        <Box marginTop={1} flexDirection="column">
+          <Text color={THEME.cyan} bold>
+            ⌁ watch on your phone
+          </Text>
+          {qrFits ? (
+            <Box flexDirection="column" marginTop={0}>
+              {qrLines.map((line, index) => (
+                <Text key={index}>{line}</Text>
+              ))}
+            </Box>
+          ) : (
+            <Text color={THEME.subtle} dimColor>
+              terminal too narrow for a QR code — type the URL below into your phone
+            </Text>
+          )}
+          <Text color={THEME.blue}>{phone.url}</Text>
+          <Text dimColor color={THEME.subtle}>
+            same Wi-Fi · opens as a web player, nothing is saved on the phone
+          </Text>
+        </Box>
+      )}
+      {phone.error && !phone.active && (
+        <Box marginTop={1}>
+          <Text color={THEME.yellow}>⚠ phone share: {phone.error}</Text>
         </Box>
       )}
 
@@ -201,7 +257,8 @@ export function StreamScreen({ stats, player, keepCache, keepDir, onStop }: Stre
       {/* footer */}
       <Box marginTop={1}>
         <Text dimColor>
-          <Text color={THEME.violet}>q</Text> stop{' '}
+          <Text color={THEME.violet}>l</Text> {phone.active ? 'stop sharing' : 'watch on phone'}{' '}
+          · <Text color={THEME.violet}>q</Text> stop{' '}
           {keepDir
             ? `→ save to ${truncateStart(keepDir, 42)}`
             : keepCache

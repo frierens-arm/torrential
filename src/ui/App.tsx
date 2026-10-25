@@ -23,6 +23,7 @@ import {
 } from '../utils/tv.js'
 import { classifyQuery, classifyTitle, voteKind } from '../utils/classify.js'
 import { lastWatchedFor, loadState, pushHistory, recordWatched, saveState, type SessionState } from '../utils/state.js'
+import { planPlaybackReturn } from '../utils/playback.js'
 import { SearchScreen } from './screens/SearchScreen.js'
 import { SeriesScreen } from './screens/SeriesScreen.js'
 import { MovieResultsScreen } from './screens/MovieResultsScreen.js'
@@ -68,6 +69,10 @@ export interface AppProps {
   magnetArg?: string
   noPlayer: boolean
   playerOverride?: string
+  /** --phone: share the stream to the LAN and skip the desktop player. */
+  phone?: boolean
+  /** --lan-ip: advertise this LAN address on the QR instead of detecting one. */
+  lanIp?: string
   /** --keep: move the streamed file to config.keep_directory on teardown. */
   keep?: boolean
   /** Path the config was loaded from (undefined = default), used by /theme persistence. */
@@ -84,6 +89,8 @@ export function App({
   magnetArg,
   noPlayer,
   playerOverride,
+  phone = false,
+  lanIp,
   keep = false,
   configFile,
   warnings,
@@ -243,6 +250,8 @@ export function App({
     host,
     noPlayer,
     playerOverride,
+    phone,
+    lanIp,
     keep,
     onBegin: () => setScreen('stream'),
     onStreamed: (_torrentId, target: StreamTarget) => {
@@ -260,38 +269,73 @@ export function App({
       setSessionState(prev => recordWatched(prev, ctx.seriesKey, { season, episode: target.episode }))
     },
     onTeardown: () => {
-      // Auto-advance only when the episode really finished: bailing out at
-      // 40% must leave the pre-flight card exactly where it was.
+      // A finished episode returns to the EPISODE GRID, not the torrent
+      // pre-flight card: after watching you want the next episode, not
+      // another pack listing for the one you just finished. Bailing out
+      // early (q at 40%) still lands on the pre-flight card, which is where
+      // swapping torrents for the same episode belongs.
       const finished = progressRef.current >= 0.95
       const last = lastPlayedRef.current
       const series = seriesRef.current
-      let advanced = false
-      if (finished && last && series && last.seriesKey === series.key) {
-        const bucket = last.season === null ? series.unsorted : series.seasons.get(last.season)
-        const episodes = bucket ? [...bucket.episodes.keys()].sort((a, b) => a - b) : []
-        const next = episodes.find(episode => episode > last.episode)
-        if (next !== undefined) {
-          const ref: SeasonRef =
-            last.season === null ? { kind: 'unsorted' } : { kind: 'season', season: last.season }
-          setDetail({ seriesKey: series.key, ref, episode: next, index: 0, from: 'episode' })
-          setNextNote(`finished E${pad2(last.episode)} — next up E${pad2(next)} · ⏎ to play`)
-          advanced = true
-        }
-      }
-      if (advanced) lastPlayedRef.current = null
+      // The grid can only be shown for the season it is already parked on;
+      // the user cannot navigate while the stream owns the screen.
+      const gridSeason = currentSeasonRef
+        ? currentSeasonRef.kind === 'season'
+          ? currentSeasonRef.season
+          : currentSeasonRef.kind === 'unsorted'
+            ? null
+            : undefined
+        : undefined
+      const bucket =
+        last && series && last.seriesKey === series.key
+          ? last.season === null
+            ? series.unsorted
+            : series.seasons.get(last.season)
+          : null
+      const plan = planPlaybackReturn({
+        finished,
+        last,
+        seriesKey: series?.key ?? null,
+        episodes: bucket ? [...bucket.episodes.keys()] : null,
+        gridSeason
+      })
 
-      // Land back where the stream was launched from — the detail pre-flight
-      // (n/p to another torrent), the series browser, the movie list, or the
-      // search bar.
+      if (plan.toEpisodes && plan.cursorEpisode !== null && last && series && bucket) {
+        const ref: SeasonRef =
+          last.season === null ? { kind: 'unsorted' } : { kind: 'season', season: last.season }
+        // Park the cursor on the next episode (or the finished one when the
+        // season has no next), and keep the pre-flight context in sync.
+        setDetail({ seriesKey: series.key, ref, episode: plan.cursorEpisode, index: 0, from: 'episode' })
+        const cursor = buildEpisodeRows(bucket).findIndex(row => row.episode === plan.cursorEpisode)
+        if (cursor >= 0) setEpisodeSelected(cursor)
+        setNextNote(plan.note)
+      }
+      if (finished) lastPlayedRef.current = null
+
+      // Otherwise land back where the stream was launched from — the detail
+      // pre-flight (n/p to another torrent), the series browser, the movie
+      // list, or the search bar.
       setScreen(prev => {
         if (prev !== 'stream' && prev !== 'files') return prev
-        if (advanced || detailRef.current || movieDetailIndexRef.current !== null) return 'detail'
+        if (plan.toEpisodes) return 'episode'
+        if (detailRef.current || movieDetailIndexRef.current !== null) return 'detail'
         if (allResultsLenRef.current > 0) return modeRef.current === 'movies' ? 'results' : 'series'
         return 'search'
       })
     }
   })
-  const { stats, player, keepNote, clearKeepNote, beginStream, teardownStream, selectFile, shutdown } = stream
+  const {
+    stats,
+    player,
+    phone: phoneShare,
+    togglePhoneShare,
+    keepNote,
+    clearKeepNote,
+    beginStream,
+    teardownStream,
+    selectFile,
+    shutdown
+  } = stream
 
   useEffect(() => {
     if (stats) progressRef.current = stats.progress
@@ -707,6 +751,8 @@ export function App({
         <StreamScreen
           stats={stats}
           player={player}
+          phone={phoneShare}
+          onTogglePhone={togglePhoneShare}
           keepCache={config.keep_cache}
           keepDir={keep ? config.keep_directory : null}
           onStop={() => void teardownStream()}
@@ -717,6 +763,8 @@ export function App({
         <StreamScreen
           stats={stats}
           player={player}
+          phone={phoneShare}
+          onTogglePhone={togglePhoneShare}
           keepCache={config.keep_cache}
           keepDir={keep ? config.keep_directory : null}
           onStop={() => void teardownStream()}

@@ -12,11 +12,26 @@ import type { PlayerInfo } from '../screens/StreamScreen.js'
 
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
+/** Live state of the "watch on your phone" share. */
+export interface PhoneShareState {
+  active: boolean
+  /** QR/landing-page URL while sharing, null otherwise. */
+  url: string | null
+  /** Actionable reason sharing could not start (no LAN IP, loopback bind…). */
+  error: string | null
+}
+
+const PHONE_IDLE: PhoneShareState = { active: false, url: null, error: null }
+
 export interface UseStreamSessionOptions {
   config: TorrentialConfig
   host: EngineHost
   noPlayer: boolean
   playerOverride?: string
+  /** --phone: skip the desktop player and share to the LAN as soon as possible. */
+  phone?: boolean
+  /** --lan-ip: advertise this address instead of auto-detecting one. */
+  lanIp?: string
   /** --keep: rescue the streamed file into config.keep_directory on stop. */
   keep: boolean
   /** Called before a stream starts (the screen flips to 'stream'). */
@@ -33,6 +48,10 @@ export interface UseStreamSessionOptions {
 export interface StreamSession {
   stats: StreamStats | null
   player: PlayerInfo | null
+  /** Phone share state (QR URL, errors) for the stream screen. */
+  phone: PhoneShareState
+  /** Enable or revoke LAN sharing for the active stream (`l`). */
+  togglePhoneShare: () => void
   /** "saved → …" note from a --keep teardown, shown on the search screen. */
   keepNote: string | null
   clearKeepNote: () => void
@@ -60,12 +79,17 @@ export function useStreamSession(opts: UseStreamSessionOptions): StreamSession {
   const { exit } = useApp()
   const [stats, setStats] = useState<StreamStats | null>(null)
   const [player, setPlayer] = useState<PlayerInfo | null>(null)
+  const [phone, setPhone] = useState<PhoneShareState>(PHONE_IDLE)
   const [keepNote, setKeepNote] = useState<string | null>(null)
 
   const engineRef = useRef<StreamEngine | null>(null)
   const playerChildRef = useRef<ChildProcess | null>(null)
   const tearingDownRef = useRef(false)
   const shuttingDownRef = useRef(false)
+  /** True while we are deliberately closing the player for phone hand-off. */
+  const playerExitSuppressedRef = useRef(false)
+  const phoneActiveRef = useRef(false)
+  phoneActiveRef.current = phone.active
 
   // Latest options behind a ref: engine callbacks fire long after the render
   // that created them, and re-creating beginStream would restart playback.
@@ -80,6 +104,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): StreamSession {
     const engine = engineRef.current
     engineRef.current = null
     setPlayer(null)
+    setPhone(PHONE_IDLE)
+    playerExitSuppressedRef.current = false
     log('stream:teardown', { player: child !== null, engine: engine !== null })
     if (child) await Promise.race([killPlayer(child), delay(2500)])
     if (engine) await Promise.race([engine.stop(), delay(3000)])
@@ -87,10 +113,53 @@ export function useStreamSession(opts: UseStreamSessionOptions): StreamSession {
     optsRef.current.onTeardown()
   }, [])
 
+  /**
+   * Move playback to the phone: expose the stream on the LAN and close the
+   * desktop player without tearing the engine down. The engine keeps
+   * downloading and seeding, and the turbo playhead follows the phone's
+   * HTTP reads from here on out.
+   */
+  const startPhoneShare = useCallback((): void => {
+    const engine = engineRef.current
+    if (!engine) {
+      setPhone({ active: false, url: null, error: 'no active stream to share' })
+      return
+    }
+    const result = engine.enablePhoneShare(optsRef.current.lanIp)
+    if ('error' in result) {
+      setPhone({ active: false, url: null, error: result.error })
+      return
+    }
+    const child = playerChildRef.current
+    playerChildRef.current = null
+    if (child) {
+      // Suppress the player-exit → teardown wiring: the stream must survive
+      // losing its local player when the phone takes over.
+      playerExitSuppressedRef.current = true
+      void killPlayer(child).then(() => {
+        playerExitSuppressedRef.current = false
+      })
+    }
+    setPlayer({ label: 'phone (scan the QR)', detached: true })
+    setPhone({ active: true, url: result.url, error: null })
+  }, [])
+
+  const togglePhoneShare = useCallback((): void => {
+    if (phoneActiveRef.current) {
+      engineRef.current?.disablePhoneShare()
+      setPhone(PHONE_IDLE)
+      setPlayer({ label: 'no local player — press l to share again', detached: true })
+      return
+    }
+    startPhoneShare()
+  }, [startPhoneShare])
+
   const beginStream = useCallback((torrentId: string, target: StreamTarget = { kind: 'auto' }): void => {
     const o = optsRef.current
     setStats(null)
     setPlayer(null)
+    setPhone(PHONE_IDLE)
+    playerExitSuppressedRef.current = false
     o.onBegin()
     o.onStreamed?.(torrentId, target)
 
@@ -105,7 +174,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): StreamSession {
       ramCacheMB: o.config.ram_cache_mb,
       headStartBytes: o.config.head_start_mb * 1_000_000,
       tailPrefetchBytes: o.config.tail_prefetch_mb * 1_000_000,
-      windowSecs: o.config.window_secs
+      windowSecs: o.config.window_secs,
+      preferLan: o.phone === true
     })
     engineRef.current = engine
     engine.on('stats', s => setStats(s))
@@ -117,6 +187,11 @@ export function useStreamSession(opts: UseStreamSessionOptions): StreamSession {
     })
 
     engine.on('ready', (info: ReadyInfo) => {
+      if (o.phone) {
+        // --phone: the phone is the player; never spawn anything locally.
+        startPhoneShare()
+        return
+      }
       if (o.noPlayer) {
         setPlayer({ label: 'none (--no-player) — open the endpoint above', detached: true })
         return
@@ -145,6 +220,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): StreamSession {
         setPlayer({ label: launch.name, detached: launch.detached, note })
         if (!launch.detached) {
           child.once('exit', () => {
+            if (playerExitSuppressedRef.current) return // phone hand-off
             // Player window closed → stop streaming, keep the TUI alive.
             void teardownStream()
           })
@@ -155,7 +231,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): StreamSession {
     engine.start(torrentId, target).catch(() => {
       /* stats.phase === 'error' drives the error block in the UI */
     })
-  }, [teardownStream])
+  }, [startPhoneShare, teardownStream])
 
   const selectFile = useCallback((fileIndex: number): void => {
     engineRef.current?.selectFile(fileIndex)
@@ -181,6 +257,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): StreamSession {
   return {
     stats,
     player,
+    phone,
+    togglePhoneShare,
     keepNote,
     clearKeepNote,
     beginStream,
