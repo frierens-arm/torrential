@@ -3,6 +3,48 @@
 Notable changes to **torrential**. The CLI flags and `config.json` keys are the
 public surface; anything marked *internal* can change without notice.
 
+## 2.3.0 — 2026-11-16
+
+A hardening release: everything here makes an existing feature honest or
+cheaper, not louder.
+
+### Fixed
+- **`max_results` actually caps the table.** The key was documented and
+  validated since 2.1.1 but nothing read it, so a session kept every row the
+  sources returned. The merged list is now trimmed to the healthiest swarms
+  (by seeders) once it exceeds the configured cap.
+- **`@types/node` matches the runtime.** Types move to 22 next to the `engines`
+  requirement, so Node 22-only APIs no longer type as absent.
+
+### Changed
+- **A superseded search stops scraping.** The session `AbortSignal` now flows
+  from `useSearch` through `runSearch` into every provider request
+  (`fetchText`/`fetchJson`). A new query, a `/mode` switch or an app exit drops
+  the in-flight indexer requests instead of letting each run to its timeout.
+- **One bounded retry per provider call.** A genuinely transient failure
+  (reset socket, 5xx, DNS hiccup) is retried once after 250 ms. Blocks,
+  timeouts and cancellations never are — they will not improve by asking again.
+- **`src/ui/hooks.ts` folded into `src/ui/hooks/`** as `useTerminal.ts`. The
+  repo no longer has two modules called "hooks" (*internal*).
+
+### Added
+- Tests for the pure modules that had none: player argv and launch-chain
+  fallbacks (`buildPlayerLaunch`, `findOnPath`, `resolveLaunchChain`),
+  `--sources` alias parsing, the slash-command parser, 1337x mirror URL
+  construction, and a version-drift guard that keeps `version.ts`,
+  `package.json` and this file in agreement.
+- CI gained a `dependency audit` job (`npm audit --omit=dev --audit-level=high`)
+  and weekly Dependabot updates for npm (monthly for Actions), so the pinned
+  `webtorrent` / native-dependency set is reviewed on a schedule.
+- `updates/2.3.0/` records what shipped here and what is deliberately queued
+  for the next release.
+
+### Removed
+- `tools/test-fixes-130.tsx` and `tools/test-fixes-131.tsx` — one-off
+  verification harnesses from the 1.3.x cycle that no npm script or CI job ran.
+  Their still-relevant assertions (slash commands, mirror URLs) now live in
+  `npm test`.
+
 ## 2.2.0 — 2026-10-24
 
 ### Added

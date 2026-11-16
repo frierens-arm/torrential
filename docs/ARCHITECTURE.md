@@ -83,10 +83,10 @@ the **Ink TUI** binds it all into one interactive surface.
 | `src/utils/format.ts` | Size/speed/ETA formatting, quality parsing, table padding helpers. |
 | `src/utils/tv.ts` | The episodic brain: `parseTvTitle()` regex battery (SxxExx, 1xx, 2x05, Season words, 2nd Season, absolute anime numbering, batch ranges, Complete Series), `toTvResult()` shaping, `buildSeriesIndex()` grouping (series → seasons → episodes + packs), `episodeQueries()` / `seasonQueries()` smart query generation, season/episode row builders for the TUI. |
 | `src/utils/magnet.ts` | Magnet construction (with tracker list), parsing, `looksLikeTorrentId` for the paste-a-magnet UX. |
-| `src/utils/http.ts` | `fetchText`/`fetchJson` with timeouts, browser-ish UA, friendly network errors. |
+| `src/utils/http.ts` | `fetchText`/`fetchJson` with timeouts, caller cancellation (`signal`), browser-ish UA, friendly network errors, Cloudflare challenge detection and the DoH fallback. |
 | `src/utils/ascii.ts` | Wordmark variants (ANSI Shadow / double-block / Calvin S), spinner + wave frames, gradient math. |
 | `src/ui/*` | Screens (`SearchScreen`, `SeriesScreen`, `SeasonScreen`, `EpisodeScreen`, `DetailScreen`, `FilePickerScreen`, `StreamScreen`), animated components (`Logo`, `Spinner`, `WaveLine`, `ProgressBar`, `TextInput`, `ProviderChips`), hooks (`useTerminalSize`, `useTick`). |
-| `src/ui/hooks/*` | Session logic pulled out of `App.tsx`: `useSearch` (provider aggregator, dedupe, supplemental hunts, status chips), `useStreamSession` (engine + player hand-off, phone share state, teardown), `usePreferences` (skin picker, `/theme`, `/mode`, session content mode). Callbacks travel through refs so in-flight searches/streams are never restarted by a re-render. |
+| `src/ui/hooks/*` | Session logic pulled out of `App.tsx`: `useSearch` (provider aggregator, dedupe, supplemental hunts, status chips, `max_results` cap, search cancellation), `useStreamSession` (engine + player hand-off, phone share state, teardown), `usePreferences` (skin picker, `/theme`, `/mode`, session content mode), `useTerminal` (terminal size + animation clock). Callbacks travel through refs so in-flight searches/streams are never restarted by a re-render. |
 | `src/webtorrent.d.ts` | Ambient typings for the exact webtorrent surface used. |
 
 ## Data flows
@@ -99,7 +99,11 @@ concurrently; each pushes events (`provider-start` → `results` →
 React effect in `App.tsx` consumes the generator and updates state per event,
 so rows appear the moment a source answers — no waiting for stragglers.
 Per-provider timeouts are enforced by racing the provider promise; a failing
-source only turns its status chip red.
+source only turns its status chip red. Every (provider × query) call carries
+the session's `AbortSignal`: a superseded search (new query, `/mode`, app exit)
+aborts its HTTP requests instead of letting them finish into rows nobody will
+see, and one genuinely transient failure (reset socket, 5xx) gets a single
+bounded retry — blocks, timeouts and cancellations are never retried.
 
 Dedupe: info-hash when known (Pirate Bay, magnet-carrying Nyaa rows),
 otherwise normalized-title + size. Every row is shaped at the aggregator

@@ -56,3 +56,21 @@ jobs:
 
       - name: Doctor report (offline)
         run: node dist/cli.js --doctor --offline
+
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Runtime dependencies only: an advisory in the tree we actually ship
+      # fails the build. The abandoned `ip` package is already aliased to the
+      # maintained @eggjs/ip fork in package.json, so this stays quiet.
+      - run: npm audit --omit=dev --audit-level=high

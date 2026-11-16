@@ -3,7 +3,7 @@ import { useInput } from 'ink'
 import type { SeasonRef, SeasonRow } from '../../utils/tv.js'
 import { THEME } from '../../constants.js'
 import { formatBytes, padEnd, padStart, qualityBadge, seedColor, truncate } from '../../utils/format.js'
-import { useTerminalSize } from '../hooks.js'
+import { useTerminalSize } from '../hooks/useTerminal.js'
 
 export interface SeasonScreenProps {
   show: string

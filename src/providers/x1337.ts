@@ -40,27 +40,29 @@ async function loadSearchPage(
   query: string,
   timeoutMs: number,
   customMirrors: string[],
-  tvCategory: boolean
+  tvCategory: boolean,
+  signal?: AbortSignal
 ): Promise<ScrapeContext> {
   const mirrors = [...customMirrors, ...MIRRORS.x1337]
   const failures: string[] = []
   for (const url of x1337MirrorUrls(mirrors, query, tvCategory)) {
     const base = new URL('/', url).toString()
     try {
-      const html = await fetchText(url, { timeoutMs })
+      const html = await fetchText(url, { timeoutMs, signal })
       const $ = cheerio.load(html)
       if ($('table tbody tr').length > 0) return { base, html }
       // A page with no rows can also mean "no results" on the primary mirror.
       if ($('.box-info').length > 0 || $('table').length > 0) return { base, html }
       failures.push(`${new URL(url).host}: page shape not recognized`)
     } catch (err) {
+      if (signal?.aborted) throw err
       failures.push(`${new URL(url).host}: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
   // TV category pass exhausted → one plain-search pass before giving up
   // (some mirrors only expose the generic route). Only reachable when the
   // first pass was the category one; movies/auto START on plain search.
-  if (tvCategory) return loadSearchPage(query, timeoutMs, customMirrors, false)
+  if (tvCategory) return loadSearchPage(query, timeoutMs, customMirrors, false, signal)
   const detail = failures.slice(0, 2).join(' · ')
   throw new Error(
     `all 1337x mirrors failed (${detail}). Your ISP may block these domains — ` +
@@ -114,7 +116,7 @@ function parseRows(ctx: ScrapeContext): Row337x[] {
 /** Fetch the magnet off a 1337x torrent detail page. */
 async function fetchDetailMagnet(detailUrl: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
   if (signal?.aborted) throw new Error('aborted')
-  const html = await fetchText(detailUrl, { timeoutMs })
+  const html = await fetchText(detailUrl, { timeoutMs, signal })
   const $ = cheerio.load(html)
   const magnet = $('a[href^="magnet:?"]').first().attr('href')
   if (!magnet || !/^magnet:\?/i.test(magnet)) {
@@ -143,7 +145,7 @@ export const x1337Provider: Provider = {
 
   async search(query, opts): Promise<SearchResult[]> {
     const tvCategory = opts.mode === 'tv'
-    const ctx = await loadSearchPage(query, opts.timeoutMs, opts.x1337Mirrors ?? [], tvCategory)
+    const ctx = await loadSearchPage(query, opts.timeoutMs, opts.x1337Mirrors ?? [], tvCategory, opts.signal)
     const rows = parseRows(ctx)
     const sorted = rows.sort((a, b) => b.seeders - a.seeders).slice(0, 60)
 
@@ -152,7 +154,7 @@ export const x1337Provider: Provider = {
       let cached: Promise<string> | null = null
       const fetchMagnet = (): Promise<string> => {
         if (!cached) {
-          cached = fetchDetailMagnet(r.detailUrl, opts.timeoutMs).catch(err => {
+          cached = fetchDetailMagnet(r.detailUrl, opts.timeoutMs, opts.signal).catch(err => {
             cached = null // allow a retry on the next selection
             throw err
           })

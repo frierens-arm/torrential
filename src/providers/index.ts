@@ -35,9 +35,18 @@ export function providerInfos(): ProviderInfo[] {
  * Each (provider × query) task is individually raced against the search
  * timeout; one failing source never poisons the others.
  */
+export interface SearchOpts {
+  providers: string[]
+  timeoutMs: number
+  x1337Mirrors?: string[]
+  mode?: SearchMode
+  /** Session cancellation — a superseded search aborts it and stops scraping. */
+  signal?: AbortSignal
+}
+
 export async function* runSearch(
   query: string | string[],
-  opts: { providers: string[]; timeoutMs: number; x1337Mirrors?: string[]; mode?: SearchMode }
+  opts: SearchOpts
 ): AsyncGenerator<SearchEvent> {
   const queries = (Array.isArray(query) ? query : [query])
     .map(q => q.trim())
@@ -92,11 +101,7 @@ export async function* runSearch(
       let rows: SearchResult[] = []
       let failure: string | null = null
       try {
-        const raw = await withTimeout(
-          provider.search(query, { timeoutMs: opts.timeoutMs, x1337Mirrors: opts.x1337Mirrors, mode: opts.mode }),
-          opts.timeoutMs,
-          `${provider.info.label} timed out`
-        )
+        const raw = await searchOnce(provider, query, opts)
         // ── row shaping: classify + tag episodic rows, keep the rest ──
         rows = raw
           .map(r => tagRow(r, provider.info.id))
@@ -111,6 +116,18 @@ export async function* runSearch(
           })
       } catch (err) {
         failure = err instanceof Error ? err.message : String(err)
+      }
+
+      if (opts.signal?.aborted) {
+        // A superseded search: unwind quietly, but keep the pending counters
+        // honest so the queue can never wait on a provider that left.
+        const left = (pendingQueries.get(id) ?? 1) - 1
+        pendingQueries.set(id, left)
+        if (left === 0) {
+          pendingQueries.delete(id)
+          if (pendingQueries.size === 0) push({ type: 'all-done' })
+        }
+        return
       }
 
       log('search:provider', {
@@ -163,18 +180,60 @@ export async function* runSearch(
   }
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+
+/**
+ * One provider × query attempt, with a single bounded retry for genuinely
+ * transient failures (reset sockets, 5xx, DNS hiccups). A block, a timeout or
+ * caller cancellation is a verdict, not a hiccup — those are never retried.
+ */
+async function searchOnce(provider: Provider, query: string, opts: SearchOpts): Promise<SearchResult[]> {
+  const call = (): Promise<SearchResult[]> =>
+    withTimeout(
+      provider.search(query, {
+        timeoutMs: opts.timeoutMs,
+        x1337Mirrors: opts.x1337Mirrors,
+        mode: opts.mode,
+        signal: opts.signal
+      }),
+      opts.timeoutMs,
+      `${provider.info.label} timed out`,
+      opts.signal
+    )
+  try {
+    return await call()
+  } catch (err) {
+    if (!isTransient(err, opts.signal)) throw err
+    await delay(250)
+    if (opts.signal?.aborted) throw err
+    log('search:retry', { provider: provider.info.id, query })
+    return await call()
+  }
+}
+
+function isTransient(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return false
+  const msg = err instanceof Error ? err.message : String(err)
+  return !/blocked|challenge|timed out|aborted|HTTP 4\d\d|malformed JSON|not found/i.test(msg)
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string, signal?: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('aborted by caller'))
+      return
+    }
     const timer = setTimeout(() => reject(new Error(message)), ms)
+    const onAbort = (): void => reject(new Error('aborted by caller'))
+    signal?.addEventListener('abort', onAbort, { once: true })
+    const settle = (fn: () => void): void => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      fn()
+    }
     promise.then(
-      value => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      err => {
-        clearTimeout(timer)
-        reject(err)
-      }
+      value => settle(() => resolve(value)),
+      err => settle(() => reject(err))
     )
   })
 }

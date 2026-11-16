@@ -105,7 +105,10 @@ untouched where it is.
 
 ### `max_results` — number, default `40` (5–250)
 
-Cap on the merged, seed-sorted results table.
+Cap on the merged results a session keeps. Rows stream in from every source;
+when the merged list grows past this number, the healthiest swarms (by
+seeders) are kept and the tail is dropped. Lower it on a slow terminal, raise
+it when one show's episodes are spread across many uploads.
 
 ### `providers` — string[], default `["piratebay", "1337x", "nyaa"]`
 

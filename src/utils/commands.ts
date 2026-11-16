@@ -30,14 +30,16 @@ export function parseSlashCommand(text: string): SlashCommand {
   if (THEME_WORDS.has(head)) {
     const arg = words.slice(1).join(' ').trim().toLowerCase()
     // `/theme list` and `/theme ?` behave like bare `/theme` (show picker).
-    if (arg === 'list' || arg === '?' || arg === 'ls') return { kind: 'theme' }
-    return { kind: 'theme', arg: arg.length > 0 ? arg : undefined }
+    // A bare command carries no `arg` key at all — callers test presence, not
+    // `undefined`, and a dangling property makes the shapes harder to compare.
+    if (arg.length === 0 || arg === 'list' || arg === '?' || arg === 'ls') return { kind: 'theme' }
+    return { kind: 'theme', arg }
   }
   if (MODE_WORDS.has(head)) {
     const arg = words.slice(1).join(' ').trim().toLowerCase()
     // `/mode list` and `/mode ?` behave like bare `/mode` (show current).
-    if (arg === 'list' || arg === '?' || arg === 'ls') return { kind: 'mode' }
-    return { kind: 'mode', arg: arg.length > 0 ? arg : undefined }
+    if (arg.length === 0 || arg === 'list' || arg === '?' || arg === 'ls') return { kind: 'mode' }
+    return { kind: 'mode', arg }
   }
   return { kind: 'unknown', name: head }
 }

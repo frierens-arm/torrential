@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink'
 import { BAR_EMPTY, BAR_FILLED, BAR_SHEEN, gradientOf } from '../../utils/ascii.js'
 import { THEME } from '../../constants.js'
-import { useTick } from '../hooks.js'
+import { useTick } from '../hooks/useTerminal.js'
 
 /**
  * The signature progress bar: a violet→cyan gradient with a bright sheen

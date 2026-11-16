@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useStdout } from 'ink'
 
-/** Terminal dimensions that react to resizes. */
+/**
+ * Terminal dimensions that react to resizes.
+ *
+ * Lives beside the other UI hooks (`hooks/useSearch.ts`, `hooks/useStreamSession.ts`,
+ * `hooks/usePreferences.ts`) instead of in a standalone `hooks.ts` file, so a
+ * contributor never has to guess which of the two "hooks" modules to edit.
+ */
 export function useTerminalSize(): { width: number; height: number } {
   const { stdout } = useStdout()
   const read = (): { width: number; height: number } => ({

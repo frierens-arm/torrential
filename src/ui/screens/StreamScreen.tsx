@@ -8,7 +8,7 @@ import { qrWidth, renderQr } from '../../utils/qr.js'
 import type { PhoneShareState } from '../hooks/useStreamSession.js'
 import { ProgressBar } from '../components/ProgressBar.js'
 import { Spinner } from '../components/Spinner.js'
-import { useTerminalSize } from '../hooks.js'
+import { useTerminalSize } from '../hooks/useTerminal.js'
 
 export interface PlayerInfo {
   label: string

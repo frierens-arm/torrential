@@ -1,6 +1,6 @@
 {
   "name": "torrential",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "A torrential downpour in your terminal — search the swarm, stream instantly, or scan a QR and watch on your phone. torlink-inspired TUI fused with a programmatic WebTorrent streaming engine.",
   "type": "module",
   "bin": {
@@ -26,6 +26,7 @@
     "test": "node tools/run-tests.mjs",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test && npm run build && npm run smoke",
+    "audit": "npm audit --omit=dev --audit-level=high",
     "doctor": "node dist/cli.js --doctor",
     "prepack": "npm run build",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
@@ -66,7 +67,7 @@
     "webtorrent": "^3.0.21"
   },
   "devDependencies": {
-    "@types/node": "^20.14.0",
+    "@types/node": "^22.14.0",
     "@types/react": "^18.3.3",
     "ink-testing-library": "^4.0.0",
     "tsx": "^4.15.0",

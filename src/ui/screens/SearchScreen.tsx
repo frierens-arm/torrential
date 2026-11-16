@@ -7,7 +7,7 @@ import { ThemeList } from '../components/ThemeList.js'
 import { THEME } from '../../constants.js'
 import { parseSlashCommand } from '../../utils/commands.js'
 import { themeList, themeId } from '../../themes.js'
-import { useTerminalSize } from '../hooks.js'
+import { useTerminalSize } from '../hooks/useTerminal.js'
 
 export interface SearchScreenProps {
   initialQuery: string

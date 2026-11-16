@@ -2,7 +2,7 @@ import { Text } from 'ink'
 import type { ProviderStatus } from '../../types.js'
 import { PROVIDER_COLORS, THEME, DIVE_PHRASES } from '../../constants.js'
 import { shortProviderError } from '../../utils/format.js'
-import { useTick } from '../hooks.js'
+import { useTick } from '../hooks/useTerminal.js'
 
 /** Rotating "diving" copy while sources are still answering. */
 export function DivePhrase(): React.ReactElement {

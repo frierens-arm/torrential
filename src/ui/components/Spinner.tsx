@@ -1,7 +1,7 @@
 import { Text } from 'ink'
 import { SPINNER_FRAMES } from '../../utils/ascii.js'
 import { getTheme } from '../../themes.js'
-import { useTick } from '../hooks.js'
+import { useTick } from '../hooks/useTerminal.js'
 
 /** Braille spinner, torlink-fluid. Color resolves at render so skins apply live. */
 export function Spinner({ color }: { color?: string }): React.ReactElement {

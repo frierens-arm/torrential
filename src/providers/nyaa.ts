@@ -49,8 +49,8 @@ function parseNyaaPage(html: string, base: string): NyaaRow[] {
 }
 
 /** Fallback: fetch the magnet off a nyaa detail page. */
-async function fetchNyaaMagnet(detailUrl: string, timeoutMs: number): Promise<string> {
-  const html = await fetchText(detailUrl, { timeoutMs })
+async function fetchNyaaMagnet(detailUrl: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  const html = await fetchText(detailUrl, { timeoutMs, signal })
   const $ = cheerio.load(html)
   const magnet = $('a[href^="magnet:?"]').first().attr('href')
   if (!magnet || !/^magnet:\?/i.test(magnet)) {
@@ -67,11 +67,14 @@ export const nyaaProvider: Provider = {
     let html: string
     try {
       const url = `${MIRRORS.nyaa[0]}/?f=0&c=0_0&q=${encodeURIComponent(query)}&s=seeders&o=desc`
-      html = await fetchText(url, { timeoutMs: opts.timeoutMs })
+      html = await fetchText(url, { timeoutMs: opts.timeoutMs, signal: opts.signal })
     } catch (err) {
+      // Never spend a second request when the caller already gave up.
+      if (opts.signal?.aborted) throw err
       // Retry without the server-side sort (some mirrors ignore params).
       html = await fetchText(`${MIRRORS.nyaa[0]}/?f=0&c=0_0&q=${encodeURIComponent(query)}`, {
-        timeoutMs: opts.timeoutMs
+        timeoutMs: opts.timeoutMs,
+        signal: opts.signal
       })
     }
     const rows = parseNyaaPage(html, MIRRORS.nyaa[0])
@@ -83,7 +86,7 @@ export const nyaaProvider: Provider = {
       const fetchMagnet = (): Promise<string> => {
         if (r.magnet) return Promise.resolve(r.magnet)
         if (!cached) {
-          cached = fetchNyaaMagnet(r.detailUrl, opts.timeoutMs).catch(err => {
+          cached = fetchNyaaMagnet(r.detailUrl, opts.timeoutMs, opts.signal).catch(err => {
             cached = null
             throw err
           })

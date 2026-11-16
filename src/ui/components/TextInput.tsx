@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Box, Text } from 'ink'
 import { useInput } from 'ink'
 import { getTheme } from '../../themes.js'
-import { useTick } from '../hooks.js'
+import { useTick } from '../hooks/useTerminal.js'
 
 export interface TextInputProps {
   value: string

@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink'
 import { WAVE_GLYPHS } from '../../utils/ascii.js'
 import { THEME } from '../../constants.js'
-import { useTick } from '../hooks.js'
+import { useTick } from '../hooks/useTerminal.js'
 
 /**
  * A drifting water-surface line — the "loading animation" that keeps the

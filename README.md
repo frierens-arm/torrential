@@ -270,7 +270,8 @@ Full matrix, install failures and log locations:
 ```bash
 npm run dev          # run from TypeScript source (tsx)
 npm run typecheck    # strict tsc
-npm test             # node:test suite (parser, classifier, server, LAN share, QR, playback)
+npm test             # node:test suite (parser, classifier, server, LAN share, QR,
+                     #   playback, player argv, --sources, slash commands, version drift)
 npm run build        # emit dist/
 npm run smoke        # turbo server HTTP compatibility matrix
 npx tsx tools/render-smoke.tsx   # Ink renders, including the phone QR block

@@ -135,7 +135,17 @@ export type SearchEvent =
 
 export interface Provider {
   info: ProviderInfo
-  search(query: string, opts: { timeoutMs: number; x1337Mirrors?: string[]; mode?: SearchMode }): Promise<SearchResult[]>
+  /**
+   * `signal` is the session's cancellation token: a superseded search (new
+   * query, /mode change, app exit) aborts it, and every HTTP request the
+   * provider makes must be dropped with it instead of running to its timeout.
+   */
+  search(query: string, opts: {
+    timeoutMs: number
+    x1337Mirrors?: string[]
+    mode?: SearchMode
+    signal?: AbortSignal
+  }): Promise<SearchResult[]>
 }
 
 /* ------------------------------------------------------------------ *

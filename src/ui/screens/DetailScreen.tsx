@@ -5,7 +5,7 @@ import type { SearchResult, StreamTarget } from '../../types.js'
 import { PROVIDER_SHORT, THEME } from '../../constants.js'
 import { formatBytes, qualityBadge, seedColor } from '../../utils/format.js'
 import { Spinner } from '../components/Spinner.js'
-import { useTerminalSize } from '../hooks.js'
+import { useTerminalSize } from '../hooks/useTerminal.js'
 
 export interface DetailScreenProps {
   /** Candidate torrents for the chosen episode / pack, best first. */

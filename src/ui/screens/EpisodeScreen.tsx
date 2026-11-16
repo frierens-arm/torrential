@@ -5,7 +5,7 @@ import type { EpisodeRow } from '../../utils/tv.js'
 import { pad2 } from '../../utils/tv.js'
 import { THEME } from '../../constants.js'
 import { formatBytes, padEnd, padStart, qualityBadge, seedColor, truncate } from '../../utils/format.js'
-import { useTerminalSize } from '../hooks.js'
+import { useTerminalSize } from '../hooks/useTerminal.js'
 
 export interface EpisodeScreenProps {
   show: string

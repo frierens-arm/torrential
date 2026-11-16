@@ -4,7 +4,7 @@ import { useInput } from 'ink'
 import type { StreamStats, TorrentFileInfo } from '../../types.js'
 import { THEME } from '../../constants.js'
 import { formatBytes, padEnd, padStart, truncate } from '../../utils/format.js'
-import { useTerminalSize } from '../hooks.js'
+import { useTerminalSize } from '../hooks/useTerminal.js'
 
 export interface FilePickerScreenProps {
   /** Engine snapshot in the 'picking' phase (carries `files`). */

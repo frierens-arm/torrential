@@ -52,6 +52,8 @@ export function useSearch({ query, searchSeq, mode, config, onFirstBatch, onEmpt
 
   const seenRef = useRef(new Set<string>())
   const huntedRef = useRef(new Set<string>())
+  /** The in-flight supplemental hunt, so a new search can cancel it. */
+  const huntControllerRef = useRef<AbortController | null>(null)
   const modeRef = useRef(mode)
   const configRef = useRef(config)
   const callbacksRef = useRef({ onFirstBatch, onEmpty })
@@ -66,10 +68,21 @@ export function useSearch({ query, searchSeq, mode, config, onFirstBatch, onEmpt
       seenRef.current.add(key)
       return true
     })
-    if (fresh.length > 0) setAllResults(prev => [...prev, ...fresh])
+    if (fresh.length === 0) return
+    const limit = configRef.current.max_results
+    setAllResults(prev => {
+      const merged = [...prev, ...fresh]
+      // config "max_results" is the documented cap on the merged table. Rows
+      // arrive in provider order, so trim by swarm health rather than by who
+      // answered last.
+      if (merged.length <= limit) return merged
+      return [...merged].sort((a, b) => b.seeders - a.seeders).slice(0, limit)
+    })
   }, [])
 
   const resetResults = useCallback((): void => {
+    huntControllerRef.current?.abort()
+    huntControllerRef.current = null
     seenRef.current = new Set<string>()
     huntedRef.current = new Set<string>()
     setAllResults([])
@@ -92,6 +105,11 @@ export function useSearch({ query, searchSeq, mode, config, onFirstBatch, onEmpt
     log('search:session', { query, mode: modeRef.current })
 
     let cancelled = false
+    const controller = new AbortController()
+    // A new search owns the screen: any hunt still running for the previous
+    // one is talking to indexers about rows nobody will ever see.
+    huntControllerRef.current?.abort()
+    huntControllerRef.current = null
     let sawResults = false
     void (async () => {
       try {
@@ -99,7 +117,8 @@ export function useSearch({ query, searchSeq, mode, config, onFirstBatch, onEmpt
           providers: cfg.providers,
           timeoutMs: cfg.search_timeout * 1000,
           x1337Mirrors: cfg.x1337_mirrors,
-          mode: modeRef.current
+          mode: modeRef.current,
+          signal: controller.signal
         })
         for await (const event of events) {
           if (cancelled) return
@@ -131,6 +150,7 @@ export function useSearch({ query, searchSeq, mode, config, onFirstBatch, onEmpt
           }
         }
       } catch (err) {
+        if (controller.signal.aborted) return
         // Provider-level failures already surface through the status chips.
         log('search:session-failed', { query, message: err instanceof Error ? err.message : String(err) })
       }
@@ -138,6 +158,8 @@ export function useSearch({ query, searchSeq, mode, config, onFirstBatch, onEmpt
 
     return () => {
       cancelled = true
+      // Stop the scrapes in flight instead of letting them finish into nothing.
+      controller.abort()
     }
   }, [query, searchSeq, absorbResults])
 
@@ -146,6 +168,9 @@ export function useSearch({ query, searchSeq, mode, config, onFirstBatch, onEmpt
     (key: string, queries: string[], label: string): void => {
       if (huntedRef.current.has(key)) return
       huntedRef.current.add(key)
+      huntControllerRef.current?.abort() // one supplemental hunt at a time
+      const controller = new AbortController()
+      huntControllerRef.current = controller
       setHunting(label)
       const cfg = configRef.current
       log('hunt:start', { key, queries })
@@ -155,7 +180,8 @@ export function useSearch({ query, searchSeq, mode, config, onFirstBatch, onEmpt
             providers: cfg.providers,
             timeoutMs: cfg.search_timeout * 1000,
             x1337Mirrors: cfg.x1337_mirrors,
-            mode: modeRef.current
+            mode: modeRef.current,
+            signal: controller.signal
           })
           for await (const event of events) {
             if (event.type === 'results') absorbResults(event.results)
@@ -164,7 +190,10 @@ export function useSearch({ query, searchSeq, mode, config, onFirstBatch, onEmpt
         } catch {
           /* best effort — the view just stays as thin as it was */
         } finally {
-          setHunting(null)
+          if (huntControllerRef.current === controller) {
+            huntControllerRef.current = null
+            setHunting(null)
+          }
         }
       })()
     },

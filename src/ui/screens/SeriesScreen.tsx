@@ -7,7 +7,7 @@ import { THEME } from '../../constants.js'
 import { padEnd, padStart, seedColor, truncate } from '../../utils/format.js'
 import { DivePhrase, ProviderChips } from '../components/ProviderChips.js'
 import { WaveLine } from '../components/WaveLine.js'
-import { useTerminalSize } from '../hooks.js'
+import { useTerminalSize } from '../hooks/useTerminal.js'
 
 export interface SeriesScreenProps {
   query: string

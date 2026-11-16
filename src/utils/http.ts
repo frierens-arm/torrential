@@ -201,13 +201,24 @@ async function fetchViaDoh(url: string, timeoutMs: number, headers: Record<strin
 export interface FetchOptions {
   timeoutMs?: number
   headers?: Record<string, string>
+  /**
+   * Caller-owned cancellation. Aborting rejects immediately and is never
+   * retried — a superseded search must stop asking the indexer for rows
+   * nobody will see.
+   */
+  signal?: AbortSignal
 }
 
 /** fetch() + timeout + UA + friendly error mapping + DoH fallback. */
 export async function fetchText(url: string, opts: FetchOptions = {}): Promise<string> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  if (opts.signal?.aborted) throw new HttpError('aborted by caller')
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+  // Bridge the caller's signal onto ours (no AbortSignal.any: it is not in
+  // the ES2022 lib this project compiles against).
+  const forwardAbort = (): void => controller.abort()
+  opts.signal?.addEventListener('abort', forwardAbort, { once: true })
   try {
     const res = await fetch(url, {
       signal: controller.signal,
@@ -226,6 +237,7 @@ export async function fetchText(url: string, opts: FetchOptions = {}): Promise<s
     if (looksLikeChallenge(body)) throw challengeError(url)
     return body
   } catch (err) {
+    if (opts.signal?.aborted) throw new HttpError('aborted by caller', undefined, err)
     // v1.3.1 fix: a DNS-level failure (ENOTFOUND / EAI_AGAIN — the classic
     // ISP court-block signature) rejects fetch() with a *TypeError*, not an
     // HttpError — the old code only ran the DoH bypass for HttpErrors, so
@@ -249,6 +261,7 @@ export async function fetchText(url: string, opts: FetchOptions = {}): Promise<s
     throw httpErr
   } finally {
     clearTimeout(timer)
+    opts.signal?.removeEventListener('abort', forwardAbort)
   }
 }
 

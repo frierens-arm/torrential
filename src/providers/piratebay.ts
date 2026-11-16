@@ -30,7 +30,8 @@ export const piratebayProvider: Provider = {
   async search(query, opts): Promise<SearchResult[]> {
     const url = `https://apibay.org/q.php?q=${encodeURIComponent(query)}&num=100`
     const data = await fetchJson<ApibayRow[] | Record<string, unknown>>(url, {
-      timeoutMs: opts.timeoutMs
+      timeoutMs: opts.timeoutMs,
+      signal: opts.signal
     })
 
     // apibay answers with a single object (no array) on empty results.
