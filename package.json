@@ -71,7 +71,7 @@
     "@types/react": "^18.3.3",
     "ink-testing-library": "^4.0.0",
     "tsx": "^4.15.0",
-    "typescript": "^5.5.0"
+    "typescript": "^7.0.2"
   },
   "overrides": {
     "ip": "npm:@eggjs/ip@^2.1.0"
